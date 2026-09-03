@@ -3,8 +3,8 @@ package com.hicham.llmchat.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.hicham.llmchat.data.AnthropicClient
 import com.hicham.llmchat.data.ConversationListener
+import com.hicham.llmchat.data.ModelProvider
 import com.hicham.llmchat.data.SettingsStore
 import com.hicham.llmchat.model.AppSettings
 import com.hicham.llmchat.model.ChatMessage
@@ -22,7 +22,10 @@ data class ChatUiState(
     val error: String? = null
 )
 
-class ChatViewModel(application: Application) : AndroidViewModel(application) {
+class ChatViewModel(
+    application: Application,
+    private val modelProvider: ModelProvider
+) : AndroidViewModel(application) {
     private val settingsStore = SettingsStore(application)
 
     private val _settings = MutableStateFlow(settingsStore.load())
@@ -44,7 +47,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val text = _uiState.value.input.trim()
         if (text.isEmpty() || _uiState.value.isStreaming) return
         if (_settings.value.apiKey.isBlank()) {
-            _uiState.update { it.copy(error = "Add your Anthropic API key in Settings first.") }
+            _uiState.update { it.copy(error = "Add your API key in Settings first.") }
             return
         }
 
@@ -52,19 +55,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val historyForRequest = _uiState.value.messages + userMessage
         _uiState.update { it.copy(messages = historyForRequest, input = "", isStreaming = true, error = null) }
 
-        val client = AnthropicClient(_settings.value)
         viewModelScope.launch(Dispatchers.IO) {
-            client.runConversation(historyForRequest, object : ConversationListener {
+            modelProvider.runConversation(historyForRequest, object : ConversationListener {
                 override fun onUpdate(messages: List<ChatMessage>) {
                     _uiState.update { it.copy(messages = messages.toList()) }
                 }
+
                 override fun onToolCall(name: String, result: String) {
                     // Tool calls render inline via the message blocks themselves;
-                    // this hook is left for future use (logging, a toast, etc).
+                    // this hook remains available for future runtime telemetry/UI.
                 }
+
                 override fun onError(message: String) {
                     _uiState.update { it.copy(error = message, isStreaming = false) }
                 }
+
                 override fun onComplete() {
                     _uiState.update { it.copy(isStreaming = false) }
                 }
