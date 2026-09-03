@@ -21,8 +21,6 @@ The v0.2 architecture establishes these semantic decisions:
 - Mission is optional rather than mandatory for short actions;
 - external protocols/providers remain adapters.
 
-These decisions are recorded in the Decision Register and North Star architecture. They are architectural commitments, not claims that every implementation slice is complete.
-
 ## 2. Reconciliation matrix
 
 | Area | Target architecture | Current implementation | Status | Next proof/fix |
