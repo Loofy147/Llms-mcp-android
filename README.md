@@ -4,6 +4,19 @@ A native Android chat client (Kotlin + Jetpack Compose) that talks directly
 to the Anthropic Messages API: streaming chat, client-side tool calling, and
 MCP server support via Anthropic's MCP connector.
 
+## Architecture baseline
+
+The project is now being evaluated as a **user-owned mobile agent runtime** rather than only a chat/MCP client. Before implementing that redesign, the architecture has been separated into explicit decisions, invariants, assumptions, experiments, and rejected designs.
+
+See:
+
+- `docs/architecture/NORTH_STAR_ARCHITECTURE_v0.1.md` — target architecture and system boundaries.
+- `docs/architecture/DECISION_REGISTER_v0.1.md` — decisions, invariants, technology choices, experiments, and rejections.
+- `docs/architecture/ASSUMPTION_REGISTER_v0.1.md` — provisional assumptions and open questions.
+- `docs/security/PRIVACY_SECURITY_INVARIANTS_v0.1.md` — security and privacy invariants.
+
+The documentation baseline is intentionally separate from implementation work. The current code remains a small prototype until the architecture review is accepted.
+
 ## What's real here, and what isn't yet
 
 **Real:** every line of code in `app/src/main/`. The request/response schema
@@ -20,19 +33,14 @@ before being written into this project.
 
 **Not done: compiling it.** This project was written in a sandboxed
 environment whose network access is limited to a small allowlist (GitHub,
-package registries, api.anthropic.com, a few others). Building an Android
-APK needs Google's Maven repo (`maven.google.com`) for AndroidX/Compose and
-Gradle's own distribution server (`services.gradle.org`) — I checked directly
-and both are unreachable from here (`host_not_allowed`), along with
-`dl.google.com` and even plain Maven Central. So I could write and reason
-about every file, but I could not run `./gradlew assembleDebug` to produce
-the actual `.apk` — see "Finishing the build" below. This isn't a problem
-with the code; it's that the last, mechanical step needs a normal internet
-connection, which any Android Studio install already has.
+package registries, api.anthropic.com, a few others). Building an Android APK
+needs Google's Maven repo and Gradle distribution infrastructure. Those were
+unreachable from the original sandbox, so the repository includes GitHub
+Actions for a normal-network build instead of claiming a local APK was built.
 
-## Architecture
+## Current prototype architecture
 
-```
+```text
 app/src/main/java/com/hicham/llmchat/
 ├── MainActivity.kt         entry point, switches between Chat/Settings
 ├── model/ChatModels.kt     data classes + JSON serialization
@@ -77,67 +85,12 @@ back in a follow-up request — the classic tool-use loop. That loop lives in
   (only static bearer tokens via `authorization_token`).
 - App icon is a plain vector drawable, not a proper adaptive icon.
 - This project targets AGP 8.6.0 / Gradle 8.9 / Kotlin 2.0.21 — a
-  combination I'm confident is internally consistent. While researching the
-  CI workflow I confirmed the Android Gradle Plugin has since moved to the
-  9.x line (9.3.0 as of July 2026), which changed some core DSL/Kotlin
-  integration behavior. I deliberately didn't chase that: rewriting for a
-  major version I can't compile-test myself risked trading a known-good
-  baseline for new, unverified breakage. Android Studio will likely offer
-  an Upgrade Assistant prompt when you open this — safe to accept or
-  decline, the project builds either way.
+  combination originally selected as an internally consistent baseline.
 
 None of these are hard — they're just not what a first working version needs.
 
 ## Finishing the build
 
-You need Android Studio (Ladybird/2024.x or newer) or the command-line
-Android SDK + a real internet connection — i.e., what any Android
-developer already has. Three ways to get the actual `.apk`:
-
-1. **Android Studio (simplest):** open this folder as a project. It will
-   offer to regenerate the Gradle wrapper it's missing (see below), sync
-   dependencies from Google's/Maven's real servers, and then
-   Build → Build App Bundle(s)/APK(s) → Build APK(s).
-2. **Command line**, once you have a system Gradle or a working wrapper:
-   `./gradlew assembleDebug` — output lands in
-   `app/build/outputs/apk/debug/app-debug.apk`.
-3. **GitHub Actions (no Android Studio needed at all)** — see below.
-
-Note on the Gradle wrapper: `gradle/wrapper/gradle-wrapper.properties` is
-included, but not `gradle-wrapper.jar` itself (a small binary normally
-fetched from `services.gradle.org` — also unreachable from this sandbox).
-Android Studio detects this and regenerates it automatically on first open;
-from the command line, `gradle wrapper` (if you have any Gradle installed)
-does the same.
-
-## Building via GitHub Actions (no local Android setup needed)
-
-`.github/workflows/build-apk.yml` builds a debug APK on GitHub's own
-runners — which have completely normal internet access — and attaches it
-to the workflow run as a downloadable artifact. It deliberately doesn't
-rely on the (missing) local Gradle wrapper: it installs Gradle 8.9 directly
-via `gradle/actions/setup-gradle` and invokes `gradle` rather than
-`./gradlew`. Verified with `actionlint` (GitHub's own workflow schema, not
-just generic YAML) before being included here — 0 issues.
-
-To use it:
-
-```bash
-cd llm-mcp-client        # this folder becomes the repo root
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/<you>/<repo-name>.git
-git push -u origin main
-```
-
-Then, on GitHub: **Actions tab → Build debug APK → this run → Artifacts**
-(bottom of the page) → download `llm-chat-debug-apk.zip`, which contains
-the `.apk`. It also reruns automatically on every future push, and can be
-triggered manually any time from the Actions tab ("Run workflow").
-
-One thing I couldn't do for you: create the GitHub repo and push this
-myself — I don't have a connector for that available right now, so the
-`git` commands above are on you (or ask me again after connecting one, if
-that becomes available).
+You need Android Studio or the command-line Android SDK with normal network
+access. GitHub Actions can perform the build on a hosted runner using the
+workflow in `.github/workflows/build-apk.yml`.
