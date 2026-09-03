@@ -1,0 +1,46 @@
+name: Build debug APK
+
+# Runs on every push, or on demand from the Actions tab ("Run workflow").
+"on":
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # GitHub's runners already ship a broad set of Android SDK platforms/build-tools,
+      # but licenses still need accepting before Gradle can use them (or fetch anything
+      # missing) -- that's what this step is actually for.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # No gradlew is committed (see README) -- this installs the exact Gradle version
+      # the project was written against and puts it on PATH, so the next step can just
+      # call `gradle` directly instead.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-chat-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
