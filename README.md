@@ -19,24 +19,9 @@ The documentation baseline is intentionally separate from implementation work. T
 
 ## What's real here, and what isn't yet
 
-**Real:** every line of code in `app/src/main/`. The request/response schema
-was verified on 2026-08-30 against the current docs at
-`platform.claude.com/docs/en/agents-and-tools/mcp-connector` (not from
-memory — the connector changed its beta header and request shape at some
-point after most blog posts/tutorials about it were written, so this project
-uses the *current* form: header `anthropic-beta: mcp-client-2025-11-20`,
-and an `mcp_toolset` entry in `tools` for every server listed in
-`mcp_servers`). The SSE parsing state machine in `AnthropicClient.kt` was
-tested standalone against a mock stream shaped like the documented event
-format (including the newer `mcp_tool_use`/`mcp_tool_result` block types)
-before being written into this project.
+**Real:** the source under `app/src/main/` is present in the repository. The request/response schema and MCP connector shape were previously checked against the then-current Anthropic documentation; current provider contracts must be revalidated before production use.
 
-**Not done: compiling it.** This project was written in a sandboxed
-environment whose network access is limited to a small allowlist (GitHub,
-package registries, api.anthropic.com, a few others). Building an Android APK
-needs Google's Maven repo and Gradle distribution infrastructure. Those were
-unreachable from the original sandbox, so the repository includes GitHub
-Actions for a normal-network build instead of claiming a local APK was built.
+**Not done:** the new agent architecture is not implemented yet. The current prototype still has a direct Anthropic client, client-side demo tools, in-memory conversation state, and a simple settings store. The architecture documents deliberately describe the target rather than pretending those capabilities already exist.
 
 ## Current prototype architecture
 
@@ -58,39 +43,28 @@ app/src/main/java/com/hicham/llmchat/
 Deliberately minimal dependencies: Compose (UI), OkHttp (networking), and
 Android's built-in `org.json` for parsing — no Room, no DataStore, no
 Retrofit, no DI framework. Settings persist; conversation history does not
-survive an app restart yet (kept in memory only) — the simplest thing that
-demonstrates the real pattern, not a feature-complete product.
+survive an app restart yet — the simplest thing that demonstrates the real
+pattern, not a feature-complete product.
 
 **How MCP support actually works here:** this app does *not* implement the
 MCP protocol itself. It has a UI for adding MCP server URLs, and passes
 them straight through in the `mcp_servers` field of every request; Anthropic's
-API does the actual connecting, tool discovery, and tool execution
-server-side. That's *why* this is a small amount of code — see the
-`mcp_servers` handling in `AnthropicClient.buildRequestBody()`. Only
-remote (Streamable HTTP / SSE) MCP servers work this way — not local
-stdio-based ones, which don't really make sense on Android anyway.
+API performs the server-side connection and tool resolution for this path.
 
 Client-side tools (`get_current_time`, `calculate`) work differently: the
 model asks for them, the app executes them locally, and sends the result
-back in a follow-up request — the classic tool-use loop. That loop lives in
-`AnthropicClient.runConversation()`.
+back in a follow-up request. That loop lives in `AnthropicClient.runConversation()`.
 
-## Known simplifications (v1, on purpose)
+## Known prototype limitations
 
-- API key is in plain `SharedPreferences`, not `EncryptedSharedPreferences`.
-  Fine for a single-user device; worth hardening before wider distribution.
-- No retry/backoff on network failure, no request cancellation if you send
-  a new message mid-stream, no persistence of chat history across restarts.
-- One demo MCP server config, no OAuth flow for MCP servers that need it
-  (only static bearer tokens via `authorization_token`).
-- App icon is a plain vector drawable, not a proper adaptive icon.
-- This project targets AGP 8.6.0 / Gradle 8.9 / Kotlin 2.0.21 — a
-  combination originally selected as an internally consistent baseline.
+- API key is in plain `SharedPreferences`; this is not an acceptable product security baseline.
+- No retry/backoff on network failure and no request cancellation when a new message arrives.
+- No durable conversation history or Mission/Task/Run state.
+- No local privacy/egress policy engine or approval object.
+- No verified evidence ledger.
+- MCP is currently delegated to the Anthropic connector rather than implemented as an app-owned capability adapter.
+- The build is intentionally conservative until the architecture is validated; technology versions are not themselves architectural decisions.
 
-None of these are hard — they're just not what a first working version needs.
+## Build
 
-## Finishing the build
-
-You need Android Studio or the command-line Android SDK with normal network
-access. GitHub Actions can perform the build on a hosted runner using the
-workflow in `.github/workflows/build-apk.yml`.
+The repository includes `.github/workflows/build-apk.yml` for a hosted debug build. A normal local Android development environment can also build the project after dependency synchronization.
