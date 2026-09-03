@@ -40,9 +40,7 @@ data class CapabilityInvocationSpec(
     val idempotencyKey: String? = null
 )
 
-data class ActionPlan(
-    val invocations: List<CapabilityInvocationSpec> = emptyList()
-)
+data class ActionPlan(val invocations: List<CapabilityInvocationSpec> = emptyList())
 
 data class ActionDefinition(
     val id: String,
@@ -54,11 +52,11 @@ data class ActionDefinition(
     val plan: (Map<String, String>) -> ActionPlan = { ActionPlan() }
 )
 
+/** Execution result is deliberately effect-free; the ActionPlan is the canonical effect declaration. */
 data class ActionExecution(
     val output: Map<String, String> = emptyMap(),
     val observations: List<Observation> = emptyList(),
-    val postcondition: Boolean = true,
-    val invocations: List<CapabilityInvocationSpec> = emptyList()
+    val postcondition: Boolean = true
 )
 
 data class Observation(val key: String, val value: String)
