@@ -83,7 +83,8 @@ data class ActionExecution(
 data class CapabilityInvocationSpec(
     val capabilityId: String,
     val scope: Set<String> = emptySet(),
-    val parameters: Map<String, String> = emptyMap()
+    val parameters: Map<String, String> = emptyMap(),
+    val idempotencyKey: String? = null
 )
 
 data class Observation(
