@@ -20,8 +20,14 @@ Defines security/privacy properties that must remain true across implementations
 
 Separates provisional assumptions from rejected assumptions and open questions. It is the main anti-drift document for preventing speculation from becoming architecture.
 
+### `ECOSYSTEM_RESEARCH_2026-09.md`
+
+Records external repositories, platform APIs, protocols, and agent frameworks reviewed for reusable implementation value. Each item is classified as an adoption pattern, adapter candidate, reference, experiment, or reject; this prevents technology popularity from silently becoming an architecture decision.
+
 ## Review rule
 
 Use these documents together. Do not treat a technology choice as a foundational architectural decision unless the Decision Register says so.
 
 When implementation evidence contradicts an assumption, update the register before changing the architecture silently.
+
+External research is input, not authority. A repository or framework may influence an experiment or adapter design, but it does not override the project's foundational authority, privacy, or evidence invariants.
