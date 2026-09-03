@@ -1,7 +1,6 @@
 name: Build debug APK
 
-# Runs on every push, or on demand from the Actions tab ("Run workflow").
-"on":
+on:
   push:
   workflow_dispatch:
 
