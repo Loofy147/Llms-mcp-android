@@ -52,6 +52,18 @@ data class CapabilityDescriptor(
     val scope: Set<String> = emptySet()
 )
 
+data class CapabilityInvocation(
+    val id: String = UUID.randomUUID().toString(),
+    val runId: String,
+    val capabilityId: String,
+    val actionId: String,
+    val actionVersion: Int,
+    val effectId: String = UUID.randomUUID().toString(),
+    val scope: Set<String> = emptySet(),
+    val attributedTo: String,
+    val parameters: Map<String, String> = emptyMap()
+)
+
 data class ActionDefinition(
     val id: String,
     val version: Int,
@@ -64,7 +76,14 @@ data class ActionDefinition(
 data class ActionExecution(
     val output: Map<String, String> = emptyMap(),
     val observations: List<Observation> = emptyList(),
-    val postcondition: Boolean = true
+    val postcondition: Boolean = true,
+    val invocations: List<CapabilityInvocationSpec> = emptyList()
+)
+
+data class CapabilityInvocationSpec(
+    val capabilityId: String,
+    val scope: Set<String> = emptySet(),
+    val parameters: Map<String, String> = emptyMap()
 )
 
 data class Observation(
@@ -83,6 +102,7 @@ data class Evidence(
     val actionVersion: Int,
     val activationSource: ActivationSource,
     val authorizedBy: String?,
+    val capabilityInvocations: List<CapabilityInvocation>,
     val observations: List<Observation>,
     val verification: Verification
 )
