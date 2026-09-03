@@ -19,8 +19,7 @@ class AgentRuntimeTest {
                 val value = input["expression"] ?: error("Missing expression")
                 ActionExecution(
                     output = mapOf("result" to "42"),
-                    observations = listOf(Observation("expression", value), Observation("result", "42")),
-                    invocations = listOf(CapabilityInvocationSpec("calculator.evaluate", parameters = mapOf("expression" to value)))
+                    observations = listOf(Observation("expression", value), Observation("result", "42"))
                 )
             },
             plan = { input ->
@@ -80,8 +79,7 @@ class AgentRuntimeTest {
             execute = {
                 ActionExecution(
                     output = mapOf("ok" to "true"),
-                    observations = listOf(Observation("ok", "true")),
-                    invocations = listOf(CapabilityInvocationSpec("local.ping"))
+                    observations = listOf(Observation("ok", "true"))
                 )
             },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("local.ping"))) }
@@ -106,8 +104,7 @@ class AgentRuntimeTest {
             execute = {
                 ActionExecution(
                     postcondition = false,
-                    observations = listOf(Observation("claimed", "done")),
-                    invocations = listOf(CapabilityInvocationSpec("test.effect"))
+                    observations = listOf(Observation("claimed", "done"))
                 )
             },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("test.effect"))) }
@@ -128,13 +125,17 @@ class AgentRuntimeTest {
     }
 
     @Test
-    fun idempotencyKeyProducesStableEffectIdentityAcrossRuns() {
+    fun idempotencyKeyProducesStableEffectIdentityAndBlocksReplay() {
+        var executions = 0
         val action = ActionDefinition(
             id = "send_once",
             version = 1,
             purpose = "stable effect identity test",
             capabilities = listOf(CapabilityDescriptor("message.send", EffectClass.REVERSIBLE)),
-            execute = { ActionExecution(invocations = listOf(CapabilityInvocationSpec("message.send", idempotencyKey = "message-123"))) },
+            execute = {
+                executions += 1
+                ActionExecution()
+            },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("message.send", idempotencyKey = "message-123"))) }
         )
         val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
@@ -142,7 +143,9 @@ class AgentRuntimeTest {
         val retry = runtime.activate(ActivationRequest(ActivationSource.AUTOMATION, "send_once"))
         val firstEffect = first.evidence?.capabilityInvocations?.single()?.effectId
         assertNotNull(firstEffect)
+        assertEquals(RunStatus.SUCCEEDED, first.status)
         assertEquals(RunStatus.FAILED, retry.status)
+        assertEquals(1, executions)
         assertEquals("Effect replay blocked; reconciliation required", retry.denialReason)
     }
 
@@ -153,7 +156,7 @@ class AgentRuntimeTest {
             version = 1,
             purpose = "scope test",
             capabilities = listOf(CapabilityDescriptor("shared.effect", EffectClass.REVERSIBLE)),
-            execute = { ActionExecution(invocations = listOf(CapabilityInvocationSpec("shared.effect", idempotencyKey = "same-key"))) },
+            execute = { ActionExecution() },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("shared.effect", idempotencyKey = "same-key"))) }
         )
         val actionB = actionA.copy(id = "action_b")
@@ -173,7 +176,7 @@ class AgentRuntimeTest {
             capabilities = listOf(CapabilityDescriptor("declared", EffectClass.READ_ONLY)),
             execute = {
                 executed = true
-                ActionExecution(invocations = listOf(CapabilityInvocationSpec("not-declared")))
+                ActionExecution()
             },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("not-declared"))) }
         )
@@ -194,7 +197,7 @@ class AgentRuntimeTest {
             capabilities = listOf(CapabilityDescriptor("file.read", EffectClass.READ_ONLY, setOf("invoices"))),
             execute = {
                 executed = true
-                ActionExecution(invocations = listOf(CapabilityInvocationSpec("file.read", setOf("private"))))
+                ActionExecution()
             },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("file.read", setOf("private")))) }
         )
@@ -203,27 +206,6 @@ class AgentRuntimeTest {
         assertEquals(RunStatus.FAILED, run.status)
         assertEquals(false, executed)
         assertNull(run.evidence)
-    }
-
-    @Test
-    fun executionCannotIntroduceUnplannedInvocation() {
-        var executed = false
-        val action = ActionDefinition(
-            id = "unplanned",
-            version = 1,
-            purpose = "plan/execution consistency",
-            capabilities = listOf(CapabilityDescriptor("file.write", EffectClass.REVERSIBLE)),
-            execute = {
-                executed = true
-                ActionExecution(invocations = listOf(CapabilityInvocationSpec("file.write")))
-            },
-            plan = { ActionPlan() }
-        )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
-        val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "unplanned"))
-        assertEquals(RunStatus.FAILED, run.status)
-        assertEquals(true, executed)
-        assertEquals("Action execution changed its declared capability plan", run.denialReason)
     }
 
     @Test
@@ -237,7 +219,7 @@ class AgentRuntimeTest {
             capabilities = listOf(CapabilityDescriptor("message.send", EffectClass.REVERSIBLE)),
             execute = {
                 executed = true
-                ActionExecution(invocations = listOf(spec, spec))
+                ActionExecution()
             },
             plan = { ActionPlan(listOf(spec, spec)) }
         )
@@ -287,7 +269,7 @@ class AgentRuntimeTest {
             attributedTo = "tester",
             parameters = mapOf("message" to "hello")
         )
-        JournalRuntimeStore(journal).reserveEffects(listOf(invocation))
+        assertEquals(EffectReservation.RESERVED, JournalRuntimeStore(journal).reserveEffects(listOf(invocation)))
         val secondStore = JournalRuntimeStore(journal)
         assertEquals(EffectReservation.REPLAY_BLOCKED, secondStore.reserveEffects(listOf(invocation)))
     }
