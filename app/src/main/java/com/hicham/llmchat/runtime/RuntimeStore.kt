@@ -1,7 +1,7 @@
 package com.hicham.llmchat.runtime
 
 import java.io.File
-import java.io.FileOutputStream
+import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.charset.StandardCharsets
 import java.util.Base64
@@ -10,44 +10,33 @@ import java.util.Base64
 interface RuntimeStore {
     fun saveRun(run: Run)
     fun loadRun(runId: String, catalog: ActionCatalog): Run?
-    fun reserveEffect(invocation: CapabilityInvocation): EffectReservation
+    fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation
     fun completeEffect(effectId: String)
     fun markEffectUnknown(effectId: String)
 }
 
-enum class EffectReservation {
-    RESERVED,
-    REPLAY_BLOCKED,
-    CONFLICT
-}
+enum class EffectReservation { RESERVED, REPLAY_BLOCKED, CONFLICT }
 
 class InMemoryRuntimeStore : RuntimeStore {
     private val runs = linkedMapOf<String, Run>()
     private val effects = linkedMapOf<String, StoredEffect>()
 
     @Synchronized
-    override fun saveRun(run: Run) {
-        runs[run.id] = run
-    }
+    override fun saveRun(run: Run) { runs[run.id] = run }
 
     @Synchronized
-    override fun loadRun(runId: String, catalog: ActionCatalog): Run? {
-        return runs[runId]
-    }
+    override fun loadRun(runId: String, catalog: ActionCatalog): Run? = runs[runId]
 
     @Synchronized
-    override fun reserveEffect(invocation: CapabilityInvocation): EffectReservation {
-        val incoming = StoredEffect.from(invocation, EffectStatus.RESERVED)
-        val existing = effects[invocation.effectId]
-        if (existing == null) {
-            effects[invocation.effectId] = incoming
-            return EffectReservation.RESERVED
+    override fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation {
+        if (invocations.map { it.effectId }.distinct().size != invocations.size) return EffectReservation.CONFLICT
+        val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
+        if (incoming.any { effect -> effects[effect.effectId]?.let { !it.compatibleWith(effect) } == true }) {
+            return EffectReservation.CONFLICT
         }
-        return if (existing.compatibleWith(incoming)) {
-            EffectReservation.REPLAY_BLOCKED
-        } else {
-            EffectReservation.CONFLICT
-        }
+        if (incoming.any { effects.containsKey(it.effectId) }) return EffectReservation.REPLAY_BLOCKED
+        incoming.forEach { effects[it.effectId] = it }
+        return EffectReservation.RESERVED
     }
 
     @Synchronized
@@ -75,63 +64,36 @@ private data class StoredEffect(
     val status: EffectStatus
 ) {
     fun compatibleWith(other: StoredEffect): Boolean =
-        effectId == other.effectId &&
-            capabilityId == other.capabilityId &&
-            actionId == other.actionId &&
-            actionVersion == other.actionVersion &&
-            scope == other.scope &&
-            attributedTo == other.attributedTo &&
+        effectId == other.effectId && capabilityId == other.capabilityId && actionId == other.actionId &&
+            actionVersion == other.actionVersion && scope == other.scope && attributedTo == other.attributedTo &&
             parameters == other.parameters
 
     fun encode(): String = listOf(
-        "E",
-        effectId,
-        runId,
-        capabilityId,
-        actionId,
-        actionVersion.toString(),
-        Codec.encodeSet(scope),
-        Codec.encode(attributedTo),
-        Codec.encodeMap(parameters),
-        status.name
+        "E", Codec.encode(effectId), Codec.encode(runId), Codec.encode(capabilityId), Codec.encode(actionId),
+        actionVersion.toString(), Codec.encodeSet(scope), Codec.encode(attributedTo), Codec.encodeMap(parameters), status.name
     ).joinToString("|")
 
     companion object {
         fun from(invocation: CapabilityInvocation, status: EffectStatus) = StoredEffect(
-            effectId = invocation.effectId,
-            runId = invocation.runId,
-            capabilityId = invocation.capabilityId,
-            actionId = invocation.actionId,
-            actionVersion = invocation.actionVersion,
-            scope = invocation.scope,
-            attributedTo = invocation.attributedTo,
-            parameters = invocation.parameters,
-            status = status
+            effectId = invocation.effectId, runId = invocation.runId, capabilityId = invocation.capabilityId,
+            actionId = invocation.actionId, actionVersion = invocation.actionVersion, scope = invocation.scope,
+            attributedTo = invocation.attributedTo, parameters = invocation.parameters, status = status
         )
 
         fun decode(parts: List<String>): StoredEffect? {
             if (parts.size != 10 || parts[0] != "E") return null
             return runCatching {
                 StoredEffect(
-                    effectId = parts[1],
-                    runId = parts[2],
-                    capabilityId = parts[3],
-                    actionId = parts[4],
-                    actionVersion = parts[5].toInt(),
-                    scope = Codec.decodeSet(parts[6]),
-                    attributedTo = Codec.decode(parts[7]),
-                    parameters = Codec.decodeMap(parts[8]),
-                    status = EffectStatus.valueOf(parts[9])
+                    effectId = Codec.decode(parts[1]), runId = Codec.decode(parts[2]), capabilityId = Codec.decode(parts[3]),
+                    actionId = Codec.decode(parts[4]), actionVersion = parts[5].toInt(), scope = Codec.decodeSet(parts[6]),
+                    attributedTo = Codec.decode(parts[7]), parameters = Codec.decodeMap(parts[8]), status = EffectStatus.valueOf(parts[9])
                 )
             }.getOrNull()
         }
     }
 }
 
-/**
- * Append-only journal with fsync on every record. A torn final line is ignored during replay.
- * The journal is deliberately small-scope; compaction belongs to a later storage gate.
- */
+/** Append-only journal; a torn final record is ignored during replay. */
 class JournalRuntimeStore(private val file: File) : RuntimeStore {
     private val lock = Any()
 
@@ -140,55 +102,41 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
         if (!file.exists()) file.createNewFile()
     }
 
-    @Synchronized
-    override fun saveRun(run: Run) {
-        synchronized(lock) {
-            append(RunRecord.encode(run))
+    override fun saveRun(run: Run) = synchronized(lock) { append(RunRecord.encode(run)) }
+
+    override fun loadRun(runId: String, catalog: ActionCatalog): Run? = synchronized(lock) {
+        replay().runs[runId]?.toRun(catalog)
+    }
+
+    override fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation = synchronized(lock) {
+        if (invocations.map { it.effectId }.distinct().size != invocations.size) return@synchronized EffectReservation.CONFLICT
+        val state = replay()
+        val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
+        if (incoming.any { effect -> state.effects[effect.effectId]?.let { !it.compatibleWith(effect) } == true }) {
+            return@synchronized EffectReservation.CONFLICT
         }
+        if (incoming.any { state.effects.containsKey(it.effectId) }) return@synchronized EffectReservation.REPLAY_BLOCKED
+        incoming.forEach { append(it.encode()) }
+        EffectReservation.RESERVED
     }
 
-    @Synchronized
-    override fun loadRun(runId: String, catalog: ActionCatalog): Run? {
-        synchronized(lock) {
-            return replay().runs[runId]?.toRun(catalog)
-        }
+    override fun completeEffect(effectId: String) = synchronized(lock) {
+        append("X|${Codec.encode(effectId)}|COMPLETED")
     }
 
-    @Synchronized
-    override fun reserveEffect(invocation: CapabilityInvocation): EffectReservation {
-        synchronized(lock) {
-            val state = replay()
-            val existing = state.effects[invocation.effectId]
-            if (existing != null) {
-                val incoming = StoredEffect.from(invocation, EffectStatus.RESERVED)
-                return if (existing.compatibleWith(incoming)) {
-                    EffectReservation.REPLAY_BLOCKED
-                } else {
-                    EffectReservation.CONFLICT
-                }
-            }
-            append(StoredEffect.from(invocation, EffectStatus.RESERVED).encode())
-            return EffectReservation.RESERVED
-        }
-    }
-
-    @Synchronized
-    override fun completeEffect(effectId: String) {
-        synchronized(lock) { append("X|${Codec.encode(effectId)}|COMPLETED") }
-    }
-
-    @Synchronized
-    override fun markEffectUnknown(effectId: String) {
-        synchronized(lock) { append("X|${Codec.encode(effectId)}|UNKNOWN") }
+    override fun markEffectUnknown(effectId: String) = synchronized(lock) {
+        append("X|${Codec.encode(effectId)}|UNKNOWN")
     }
 
     private fun append(record: String) {
         val bytes = (record + "\n").toByteArray(StandardCharsets.UTF_8)
-        FileOutputStream(file, true).use { output ->
-            FileChannel.open(file.toPath(), java.nio.file.StandardOpenOption.WRITE, java.nio.file.StandardOpenOption.APPEND).use { channel ->
-                channel.write(java.nio.ByteBuffer.wrap(bytes))
-                channel.force(true)
-            }
+        FileChannel.open(
+            file.toPath(),
+            java.nio.file.StandardOpenOption.WRITE,
+            java.nio.file.StandardOpenOption.APPEND
+        ).use { channel ->
+            channel.write(ByteBuffer.wrap(bytes))
+            channel.force(true)
         }
     }
 
@@ -204,20 +152,15 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
                 "X" -> if (parts.size == 3) {
                     val effectId = Codec.decode(parts[1])
                     val current = effects[effectId]
-                    if (current != null) {
-                        val status = runCatching { EffectStatus.valueOf(parts[2]) }.getOrNull()
-                        if (status != null) effects[effectId] = current.copy(status = status)
-                    }
+                    val status = runCatching { EffectStatus.valueOf(parts[2]) }.getOrNull()
+                    if (current != null && status != null) effects[effectId] = current.copy(status = status)
                 }
             }
         }
         return State(runs, effects)
     }
 
-    private data class State(
-        val runs: MutableMap<String, RunRecord>,
-        val effects: MutableMap<String, StoredEffect>
-    )
+    private data class State(val runs: MutableMap<String, RunRecord>, val effects: MutableMap<String, StoredEffect>)
 }
 
 private data class RunRecord(
@@ -248,56 +191,30 @@ private data class RunRecord(
     companion object {
         fun encode(run: Run): String {
             val e = run.evidence
-            val fields = mutableListOf(
-                "R",
-                Codec.encode(run.id),
-                run.activation.source.name,
-                Codec.encode(run.activation.actionId),
-                run.action.version.toString(),
-                Codec.encode(run.activation.identity),
-                run.status.name,
-                Codec.encodeMap(run.activation.input),
-                Codec.encodeMap(run.output),
-                Codec.encodeNullable(run.denialReason),
-                if (e == null) "0" else "1",
-                if (e == null) "" else Codec.encode(e.authorizedBy ?: ""),
+            return listOf(
+                "R", Codec.encode(run.id), run.activation.source.name, Codec.encode(run.activation.actionId),
+                run.action.version.toString(), Codec.encode(run.activation.identity), run.status.name,
+                Codec.encodeMap(run.activation.input), Codec.encodeMap(run.output), Codec.encodeNullable(run.denialReason),
+                if (e == null) "0" else "1", if (e == null) "" else Codec.encode(e.authorizedBy ?: ""),
                 if (e == null) "" else Codec.encodeInvocations(e.capabilityInvocations),
                 if (e == null) "" else Codec.encodeObservations(e.observations),
-                if (e == null) "" else e.verification.passed.toString(),
-                if (e == null) "" else Codec.encode(e.verification.reason)
-            )
-            return fields.joinToString("|")
+                if (e == null) "" else e.verification.passed.toString(), if (e == null) "" else Codec.encode(e.verification.reason)
+            ).joinToString("|")
         }
 
         fun decode(parts: List<String>): RunRecord? {
             if (parts.size != 16 || parts[0] != "R") return null
             return runCatching {
-                val evidence = if (parts[10] == "1") {
-                    Evidence(
-                        runId = Codec.decode(parts[1]),
-                        actionId = Codec.decode(parts[3]),
-                        actionVersion = parts[4].toInt(),
-                        activationSource = ActivationSource.valueOf(parts[2]),
-                        authorizedBy = Codec.decode(parts[11]).ifBlank { null },
-                        capabilityInvocations = Codec.decodeInvocations(parts[12]),
-                        observations = Codec.decodeObservations(parts[13]),
-                        verification = Verification(
-                            passed = parts[14].toBooleanStrict(),
-                            reason = Codec.decode(parts[15])
-                        )
-                    )
-                } else null
+                val evidence = if (parts[10] == "1") Evidence(
+                    runId = Codec.decode(parts[1]), actionId = Codec.decode(parts[3]), actionVersion = parts[4].toInt(),
+                    activationSource = ActivationSource.valueOf(parts[2]), authorizedBy = Codec.decode(parts[11]).ifBlank { null },
+                    capabilityInvocations = Codec.decodeInvocations(parts[12]), observations = Codec.decodeObservations(parts[13]),
+                    verification = Verification(parts[14].toBooleanStrict(), Codec.decode(parts[15]))
+                ) else null
                 RunRecord(
-                    id = Codec.decode(parts[1]),
-                    source = ActivationSource.valueOf(parts[2]),
-                    actionId = Codec.decode(parts[3]),
-                    actionVersion = parts[4].toInt(),
-                    identity = Codec.decode(parts[5]),
-                    status = RunStatus.valueOf(parts[6]),
-                    input = Codec.decodeMap(parts[7]),
-                    output = Codec.decodeMap(parts[8]),
-                    denialReason = Codec.decodeNullable(parts[9]),
-                    evidence = evidence
+                    id = Codec.decode(parts[1]), source = ActivationSource.valueOf(parts[2]), actionId = Codec.decode(parts[3]),
+                    actionVersion = parts[4].toInt(), identity = Codec.decode(parts[5]), status = RunStatus.valueOf(parts[6]),
+                    input = Codec.decodeMap(parts[7]), output = Codec.decodeMap(parts[8]), denialReason = Codec.decodeNullable(parts[9]), evidence = evidence
                 )
             }.getOrNull()
         }
@@ -314,51 +231,26 @@ private object Codec {
     fun decodeNullable(value: String): String? = if (value == "0" || value.isBlank()) null else decode(value.removePrefix("1:"))
     fun encodeSet(value: Set<String>): String = value.toList().sorted().joinToString(",") { encode(it) }
     fun decodeSet(value: String): Set<String> = if (value.isBlank()) emptySet() else value.split(',').map(::decode).toSet()
-
-    fun encodeMap(value: Map<String, String>): String = value.toSortedMap().entries.joinToString(",") {
-        "${encode(it.key)}.${encode(it.value)}"
-    }
-
+    fun encodeMap(value: Map<String, String>): String = value.toSortedMap().entries.joinToString(",") { "${encode(it.key)}.${encode(it.value)}" }
     fun decodeMap(value: String): Map<String, String> = if (value.isBlank()) emptyMap() else value.split(',').associate {
         val separator = it.indexOf('.')
         require(separator > 0)
         decode(it.substring(0, separator)) to decode(it.substring(separator + 1))
     }
-
-    fun encodeInvocations(value: List<CapabilityInvocation>): String = value.joinToString("~") { invocation ->
-        listOf(
-            encode(invocation.id),
-            encode(invocation.runId),
-            encode(invocation.capabilityId),
-            encode(invocation.actionId),
-            invocation.actionVersion.toString(),
-            encode(invocation.effectId),
-            encodeSet(invocation.scope),
-            encode(invocation.attributedTo),
-            encodeMap(invocation.parameters)
-        ).joinToString("^")
+    fun encodeInvocations(value: List<CapabilityInvocation>): String = value.joinToString("~") { i ->
+        listOf(encode(i.id), encode(i.runId), encode(i.capabilityId), encode(i.actionId), i.actionVersion.toString(),
+            encode(i.effectId), encodeSet(i.scope), encode(i.attributedTo), encodeMap(i.parameters)).joinToString("^")
     }
-
     fun decodeInvocations(value: String): List<CapabilityInvocation> = if (value.isBlank()) emptyList() else value.split('~').map { raw ->
         val p = raw.split('^')
         require(p.size == 9)
         CapabilityInvocation(
-            id = decode(p[0]),
-            runId = decode(p[1]),
-            capabilityId = decode(p[2]),
-            actionId = decode(p[3]),
-            actionVersion = p[4].toInt(),
-            effectId = decode(p[5]),
-            scope = decodeSet(p[6]),
-            attributedTo = decode(p[7]),
-            parameters = decodeMap(p[8])
+            id = decode(p[0]), runId = decode(p[1]), capabilityId = decode(p[2]), actionId = decode(p[3]),
+            actionVersion = p[4].toInt(), effectId = decode(p[5]), scope = decodeSet(p[6]),
+            attributedTo = decode(p[7]), parameters = decodeMap(p[8])
         )
     }
-
-    fun encodeObservations(value: List<Observation>): String = value.joinToString("~") {
-        "${encode(it.key)}^${encode(it.value)}"
-    }
-
+    fun encodeObservations(value: List<Observation>): String = value.joinToString("~") { "${encode(it.key)}^${encode(it.value)}" }
     fun decodeObservations(value: String): List<Observation> = if (value.isBlank()) emptyList() else value.split('~').map {
         val p = it.split('^')
         require(p.size == 2)
