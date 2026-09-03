@@ -1,5 +1,8 @@
 package com.hicham.llmchat.runtime
 
+import java.nio.charset.StandardCharsets
+import java.util.UUID
+
 class AgentRuntime(
     private val catalog: ActionCatalog,
     private val policy: PolicyEngine
@@ -34,6 +37,23 @@ class AgentRuntime(
         val run = Run(activation = request, status = RunStatus.RUNNING, action = action)
         return try {
             val execution = action.execute(request.input)
+            val invocations = execution.invocations.map { spec ->
+                val descriptor = action.capabilities.firstOrNull { it.id == spec.capabilityId }
+                    ?: throw IllegalArgumentException("Action ${action.id} did not declare capability ${spec.capabilityId}")
+                if (!descriptor.scope.containsAll(spec.scope)) {
+                    throw IllegalArgumentException("Invocation scope exceeds declared scope for ${spec.capabilityId}")
+                }
+                CapabilityInvocation(
+                    runId = run.id,
+                    capabilityId = descriptor.id,
+                    actionId = action.id,
+                    actionVersion = action.version,
+                    effectId = effectId(action, spec),
+                    scope = spec.scope,
+                    attributedTo = request.identity,
+                    parameters = spec.parameters
+                )
+            }
             val verification = Verification(
                 passed = execution.postcondition,
                 reason = if (execution.postcondition) "Postcondition satisfied" else "Postcondition failed"
@@ -44,15 +64,12 @@ class AgentRuntime(
                 actionVersion = action.version,
                 activationSource = request.source,
                 authorizedBy = request.identity,
+                capabilityInvocations = invocations,
                 observations = execution.observations,
                 verification = verification
             )
             if (verification.passed) {
-                run.copy(
-                    status = RunStatus.SUCCEEDED,
-                    output = execution.output,
-                    evidence = evidence
-                )
+                run.copy(status = RunStatus.SUCCEEDED, output = execution.output, evidence = evidence)
             } else {
                 run.copy(
                     status = RunStatus.FAILED,
@@ -63,6 +80,17 @@ class AgentRuntime(
             }
         } catch (e: Exception) {
             run.copy(status = RunStatus.FAILED, denialReason = e.message ?: "Action execution failed")
+        }
+    }
+
+    private fun effectId(action: ActionDefinition, spec: CapabilityInvocationSpec): String {
+        val stableKey = spec.idempotencyKey
+        return if (!stableKey.isNullOrBlank()) {
+            UUID.nameUUIDFromBytes(
+                "${action.id}:${action.version}:${spec.capabilityId}:$stableKey".toByteArray(StandardCharsets.UTF_8)
+            ).toString()
+        } else {
+            UUID.randomUUID().toString()
         }
     }
 
