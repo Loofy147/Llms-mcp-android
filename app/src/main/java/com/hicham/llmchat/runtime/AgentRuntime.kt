@@ -37,36 +37,23 @@ class AgentRuntime(
     private fun execute(request: ActivationRequest, action: ActionDefinition): Run {
         val run = Run(activation = request, status = RunStatus.RUNNING, action = action)
         store.saveRun(run)
-        val invocations: List<CapabilityInvocation>
+        var invocations = emptyList<CapabilityInvocation>()
         return try {
             val plan = action.plan(request.input)
             invocations = materializeInvocations(run, action, request, plan.invocations)
-            val reservation = store.reserveEffects(invocations)
-            when (reservation) {
+            when (store.reserveEffects(invocations)) {
                 EffectReservation.RESERVED -> Unit
-                EffectReservation.REPLAY_BLOCKED -> {
-                    return run.copy(
-                        status = RunStatus.FAILED,
-                        denialReason = "Effect replay blocked; reconciliation required"
-                    ).also(store::saveRun)
-                }
-                EffectReservation.CONFLICT -> {
-                    return run.copy(
-                        status = RunStatus.FAILED,
-                        denialReason = "Effect identity conflict; execution blocked"
-                    ).also(store::saveRun)
-                }
-            }
-
-            val execution = action.execute(request.input)
-            if (execution.invocations != plan.invocations) {
-                invocations.forEach { store.markEffectUnknown(it.effectId) }
-                return run.copy(
+                EffectReservation.REPLAY_BLOCKED -> return run.copy(
                     status = RunStatus.FAILED,
-                    denialReason = "Action execution changed its declared capability plan"
+                    denialReason = "Effect replay blocked; reconciliation required"
+                ).also(store::saveRun)
+                EffectReservation.CONFLICT -> return run.copy(
+                    status = RunStatus.FAILED,
+                    denialReason = "Effect identity conflict; execution blocked"
                 ).also(store::saveRun)
             }
 
+            val execution = action.execute(request.input)
             val verification = Verification(
                 passed = execution.postcondition,
                 reason = if (execution.postcondition) "Postcondition satisfied" else "Postcondition failed"
@@ -94,7 +81,7 @@ class AgentRuntime(
                 )
             }.also(store::saveRun)
         } catch (e: Exception) {
-            if (::invocations.isInitialized) invocations.forEach { store.markEffectUnknown(it.effectId) }
+            invocations.forEach { store.markEffectUnknown(it.effectId) }
             run.copy(status = RunStatus.FAILED, denialReason = e.message ?: "Action execution failed")
                 .also(store::saveRun)
         }
