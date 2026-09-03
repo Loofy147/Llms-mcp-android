@@ -16,6 +16,8 @@ This directory is the controlled architectural reference for `Llms-mcp-android`.
 
 `ECOSYSTEM_RESEARCH_2026-09.md` remains research input. External repositories and protocols do not override the architecture.
 
+`PATTERN_LABORATORY_REGISTRY_v0.1.md` is the controlled registry for extracting reusable patterns, invariants, experiments, and rejected designs from external projects across domains.
+
 ## Canonical semantic distinction
 
 ```text
@@ -28,6 +30,10 @@ Tool = exposure/interface
 Capability = controlled primitive effect
 Action = reusable execution contract
 ```
+
+## Pattern laboratory rule
+
+External repositories are treated as laboratories, not templates. A finding must be classified as `ADOPT`, `ADAPT`, `REJECT`, or `EXPERIMENT`, and should produce an architectural decision, invariant, measurable experiment, implementation contract, or explicit rejection before it influences the core.
 
 ## Review rule
 
