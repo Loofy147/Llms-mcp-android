@@ -19,9 +19,9 @@ The documentation baseline is intentionally separate from implementation work. T
 
 ## What's real here, and what isn't yet
 
-**Real:** the source under `app/src/main/` is present in the repository. The request/response schema and MCP connector shape were previously checked against the then-current Anthropic documentation; current provider contracts must be revalidated before production use.
+**Real:** the source under `app/src/main/` is present in the repository. The current prototype contains a direct Anthropic client, streaming response parsing, client-side demo tools, MCP configuration, and a Compose UI.
 
-**Not done:** the new agent architecture is not implemented yet. The current prototype still has a direct Anthropic client, client-side demo tools, in-memory conversation state, and a simple settings store. The architecture documents deliberately describe the target rather than pretending those capabilities already exist.
+**Not done:** the new agent architecture is not implemented yet. The architecture documents deliberately describe the target rather than pretending those capabilities already exist.
 
 ## Current prototype architecture
 
@@ -41,29 +41,27 @@ app/src/main/java/com/hicham/llmchat/
 ```
 
 Deliberately minimal dependencies: Compose (UI), OkHttp (networking), and
-Android's built-in `org.json` for parsing — no Room, no DataStore, no
-Retrofit, no DI framework. Settings persist; conversation history does not
-survive an app restart yet — the simplest thing that demonstrates the real
-pattern, not a feature-complete product.
+Android's built-in `org.json` for parsing. Settings persist; conversation
+history does not survive an app restart yet.
 
-**How MCP support actually works here:** this app does *not* implement the
-MCP protocol itself. It has a UI for adding MCP server URLs, and passes
-them straight through in the `mcp_servers` field of every request; Anthropic's
-API performs the server-side connection and tool resolution for this path.
+**How MCP support currently works:** this app does not implement the MCP
+protocol itself. It configures remote MCP servers and passes that configuration
+to the Anthropic connector, which performs the server-side connection and tool
+resolution for this current path.
 
 Client-side tools (`get_current_time`, `calculate`) work differently: the
-model asks for them, the app executes them locally, and sends the result
-back in a follow-up request. That loop lives in `AnthropicClient.runConversation()`.
+model requests them, the app executes them locally, and the result is sent
+back in a follow-up request.
 
 ## Known prototype limitations
 
 - API key is in plain `SharedPreferences`; this is not an acceptable product security baseline.
-- No retry/backoff on network failure and no request cancellation when a new message arrives.
 - No durable conversation history or Mission/Task/Run state.
 - No local privacy/egress policy engine or approval object.
 - No verified evidence ledger.
 - MCP is currently delegated to the Anthropic connector rather than implemented as an app-owned capability adapter.
-- The build is intentionally conservative until the architecture is validated; technology versions are not themselves architectural decisions.
+- No model-provider abstraction beyond the current Anthropic client.
+- No general capability scope/effect model beyond the demo ToolRegistry.
 
 ## Build
 
