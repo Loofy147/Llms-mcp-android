@@ -32,6 +32,7 @@ enum class PolicyDecision {
 enum class RunStatus {
     CREATED,
     RUNNING,
+    WAITING_APPROVAL,
     SUCCEEDED,
     FAILED,
     DENIED,
@@ -95,4 +96,3 @@ data class Run(
     val evidence: Evidence? = null,
     val denialReason: String? = null
 )
-EOF

@@ -11,37 +11,16 @@ class ActionCatalog(actions: List<ActionDefinition>) {
         fun demo(): ActionCatalog = ActionCatalog(
             listOf(
                 ActionDefinition(
-                    id = "calculate",
+                    id = "local_status",
                     version = 1,
-                    purpose = "Evaluate a basic arithmetic expression without model inference.",
+                    purpose = "Return a deterministic local runtime status without model inference.",
                     capabilities = listOf(
-                        CapabilityDescriptor("calculator.evaluate", EffectClass.READ_ONLY)
-                    )
-                ) { input ->
-                    val expression = input["expression"] ?: error("Missing expression")
-                    val result = com.hicham.llmchat.data.SafeArithmetic.evaluate(expression)
-                    ActionExecution(
-                        output = mapOf("result" to result.toString()),
-                        observations = listOf(Observation("expression", expression), Observation("result", result.toString())),
-                        postcondition = result.isFinite()
-                    )
-                },
-                ActionDefinition(
-                    id = "get_current_time",
-                    version = 1,
-                    purpose = "Read the device local time.",
-                    capabilities = listOf(
-                        CapabilityDescriptor("device.clock.read", EffectClass.READ_ONLY)
+                        CapabilityDescriptor("runtime.status.read", EffectClass.READ_ONLY)
                     )
                 ) {
-                    val value = java.text.SimpleDateFormat(
-                        "yyyy-MM-dd HH:mm:ss (zzz)",
-                        java.util.Locale.getDefault()
-                    ).format(java.util.Date())
                     ActionExecution(
-                        output = mapOf("time" to value),
-                        observations = listOf(Observation("local_time", value)),
-                        postcondition = value.isNotBlank()
+                        output = mapOf("status" to "ok"),
+                        observations = listOf(Observation("status", "ok"))
                     )
                 }
             )

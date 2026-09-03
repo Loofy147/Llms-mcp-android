@@ -22,7 +22,7 @@ class AgentRuntime(
             )
             PolicyDecision.APPROVAL_REQUIRED -> Run(
                 activation = request,
-                status = RunStatus.DENIED,
+                status = RunStatus.WAITING_APPROVAL,
                 action = action,
                 denialReason = "Explicit approval required"
             )
