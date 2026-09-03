@@ -99,14 +99,15 @@ Use these labels in future reviews:
 1. Protect credential storage without widening the dependency surface.
 2. Establish the provider-neutral model boundary at the UI/runtime edge.
 3. Add explicit CapabilityInvocation identity, attribution, scope, and optional stable effect identity.
+4. Enforce that every declared invocation uses a declared capability and cannot exceed its declared scope.
 
 ### Next correction gates
 
-4. Establish an explicit EgressDecision boundary before protected remote model/MCP flows.
-5. Persist Run/Evidence/effect state and test process-death/retry behavior.
-6. Persist approval context with operation/scope binding and replay protection.
-7. Move MCP from the vendor adapter to an internal protocol adapter boundary.
-8. Only then expand activation surfaces and richer Actions.
+5. Establish an explicit EgressDecision boundary before protected remote model/MCP flows.
+6. Persist Run/Evidence/effect state and test process-death/retry behavior.
+7. Persist approval context with operation/scope binding and replay protection.
+8. Move MCP from the vendor adapter to an internal protocol adapter boundary.
+9. Only then expand activation surfaces and richer Actions.
 
 ## 6. Non-goals of this correction pass
 
