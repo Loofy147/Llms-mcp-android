@@ -7,32 +7,35 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Thin wrapper over SharedPreferences. No Room/DataStore dependency, since
- * the data here is small and simple.
+ * Stores non-secret application settings.
  *
- * SECURITY NOTE: this stores the API key in plain SharedPreferences, not
- * EncryptedSharedPreferences (androidx.security.crypto). That's fine on a
- * single-user device with no root/backup exposure, but it's a real
- * simplification, not an oversight — see README "Known simplifications".
+ * Credentials are deliberately kept in CredentialStore, backed by Android
+ * Keystore. A one-time compatibility migration imports legacy plaintext
+ * credentials from the previous prototype and removes them from ordinary
+ * settings afterward.
  */
 class SettingsStore(context: Context) {
-    private val prefs = context.getSharedPreferences("llm_chat_settings", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val credentials = CredentialStore(context)
 
     fun load(): AppSettings {
+        migrateLegacyCredentials()
+
         val servers = mutableListOf<McpServerConfig>()
         val arr = JSONArray(prefs.getString(KEY_MCP_SERVERS, "[]") ?: "[]")
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
+            val name = o.getString("name")
             servers.add(
                 McpServerConfig(
-                    name = o.getString("name"),
+                    name = name,
                     url = o.getString("url"),
-                    authorizationToken = o.optString("authorization_token", "").ifBlank { null }
+                    authorizationToken = credentials.readMcpToken(name)
                 )
             )
         }
         return AppSettings(
-            apiKey = prefs.getString(KEY_API_KEY, "") ?: "",
+            apiKey = credentials.readApiKey().orEmpty(),
             model = prefs.getString(KEY_MODEL, "claude-sonnet-5") ?: "claude-sonnet-5",
             systemPrompt = prefs.getString(KEY_SYSTEM_PROMPT, "") ?: "",
             mcpServers = servers,
@@ -46,20 +49,56 @@ class SettingsStore(context: Context) {
             arr.put(JSONObject().apply {
                 put("name", s.name)
                 put("url", s.url)
-                s.authorizationToken?.let { put("authorization_token", it) }
             })
+            credentials.writeMcpToken(s.name, s.authorizationToken)
         }
+
+        credentials.writeApiKey(settings.apiKey)
         prefs.edit()
-            .putString(KEY_API_KEY, settings.apiKey)
             .putString(KEY_MODEL, settings.model)
             .putString(KEY_SYSTEM_PROMPT, settings.systemPrompt)
             .putString(KEY_MCP_SERVERS, arr.toString())
             .putBoolean(KEY_NATIVE_TOOLS, settings.nativeToolsEnabled)
+            .remove(KEY_API_KEY)
             .apply()
     }
 
+    private fun migrateLegacyCredentials() {
+        val legacyApiKey = prefs.getString(KEY_API_KEY, null)
+        if (!legacyApiKey.isNullOrBlank()) {
+            credentials.migrateLegacyApiKey(legacyApiKey)
+        }
+
+        val legacyServers = runCatching {
+            JSONArray(prefs.getString(KEY_MCP_SERVERS, "[]") ?: "[]")
+        }.getOrDefault(JSONArray())
+        for (i in 0 until legacyServers.length()) {
+            val server = legacyServers.optJSONObject(i) ?: continue
+            val name = server.optString("name").trim()
+            val token = server.optString("authorization_token").ifBlank { null }
+            if (name.isNotBlank() && token != null) {
+                credentials.writeMcpToken(name, token)
+            }
+        }
+
+        // Remove only the legacy plaintext fields. Non-secret settings remain.
+        if (!legacyApiKey.isNullOrBlank()) {
+            prefs.edit().remove(KEY_API_KEY).apply()
+        }
+        val sanitizedServers = JSONArray()
+        for (i in 0 until legacyServers.length()) {
+            val server = legacyServers.optJSONObject(i) ?: continue
+            sanitizedServers.put(JSONObject().apply {
+                put("name", server.optString("name"))
+                put("url", server.optString("url"))
+            })
+        }
+        prefs.edit().putString(KEY_MCP_SERVERS, sanitizedServers.toString()).apply()
+    }
+
     companion object {
-        private const val KEY_API_KEY = "api_key"
+        private const val PREFS_NAME = "llm_chat_settings"
+        private const val KEY_API_KEY = "api_key" // legacy only; never written now
         private const val KEY_MODEL = "model"
         private const val KEY_SYSTEM_PROMPT = "system_prompt"
         private const val KEY_MCP_SERVERS = "mcp_servers"
