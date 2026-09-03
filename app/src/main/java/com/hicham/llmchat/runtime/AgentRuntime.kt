@@ -131,6 +131,8 @@ class AgentRuntime(
         id = id,
         version = 0,
         purpose = "missing",
-        capabilities = emptyList()
-    ) { error("missing action") }
+        capabilities = emptyList(),
+        execute = { error("missing action") },
+        plan = { ActionPlan() }
+    )
 }
