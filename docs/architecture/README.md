@@ -1,33 +1,34 @@
 # Architecture Documentation
 
-This directory is the controlled reference for the architecture of `Llms-mcp-android`.
+This directory is the controlled architectural reference for `Llms-mcp-android`.
 
-## Canonical documents
+## Current baseline
 
-### `NORTH_STAR_ARCHITECTURE_v0.1.md`
+`NORTH_STAR_ARCHITECTURE_v0.2.md` is the current reconciled North Star. It supersedes v0.1 as the active design vocabulary while preserving the earlier documents as historical review artifacts.
 
-Defines the target system boundary, domain model, control plane, runtime, capability model, provider boundary, MCP position, Android integration surfaces, persistence strategy, background execution model, and the intended reuse boundary with Agora.
+`DECISION_REGISTER_v0.2.md` records current foundational decisions, invariants, policies, technology choices, experiments, and rejected designs.
 
-### `DECISION_REGISTER_v0.1.md`
+`ASSUMPTION_REGISTER_v0.2.md` records hypotheses and open questions that must not silently become architecture.
 
-Records foundational decisions, invariants, product policies, technology choices, experiments, rejected designs, and change-control rules.
+`../security/PRIVACY_SECURITY_INVARIANTS_v0.2.md` is the current security/privacy baseline.
 
-### `../security/PRIVACY_SECURITY_INVARIANTS_v0.1.md`
+`REVIEW_CHECKLIST_v0.2.md` is the implementation gate.
 
-Defines security/privacy properties that must remain true across implementations, providers, capabilities, UI surfaces, and distribution profiles.
+`ECOSYSTEM_RESEARCH_2026-09.md` remains research input. External repositories and protocols do not override the architecture.
 
-### `ASSUMPTION_REGISTER_v0.1.md`
+## Canonical semantic distinction
 
-Separates provisional assumptions from rejected assumptions and open questions. It is the main anti-drift document for preventing speculation from becoming architecture.
+```text
+Activation -> Action -> CapabilityInvocation -> execution
+                 ^
+                 |
+          optional Model selection
 
-### `ECOSYSTEM_RESEARCH_2026-09.md`
-
-Records external repositories, platform APIs, protocols, and agent frameworks reviewed for reusable implementation value. Each item is classified as an adoption pattern, adapter candidate, reference, experiment, or reject; this prevents technology popularity from silently becoming an architecture decision.
+Tool = exposure/interface
+Capability = controlled primitive effect
+Action = reusable execution contract
+```
 
 ## Review rule
 
-Use these documents together. Do not treat a technology choice as a foundational architectural decision unless the Decision Register says so.
-
-When implementation evidence contradicts an assumption, update the register before changing the architecture silently.
-
-External research is input, not authority. A repository or framework may influence an experiment or adapter design, but it does not override the project's foundational authority, privacy, or evidence invariants.
+Do not elevate a library, protocol, model, or repository into a foundational dependency merely because it is popular or mature. Promote it only when its measured behavior satisfies a required contract without weakening authority, privacy, evidence, or replaceability.
