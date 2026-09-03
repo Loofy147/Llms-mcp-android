@@ -22,7 +22,7 @@ Supersedes: `DECISION_REGISTER_v0.1.md` for new design decisions
 | D-03 | Models provide reasoning/selection but never authorize their own execution. | ACCEPTED |
 | D-04 | **Activation** is a first-class entry concept shared by UI, automation, OS surfaces, models, and external clients. | ACCEPTED |
 | D-05 | **Capability** is the primitive unit of controlled effect. | ACCEPTED |
-| D-06 | **Action** is a reusable executable contract composed from one or more capability invocations; Actions may be deterministic, model-assisted, or hybrid. | ACCEPTED |
+| D-06 | **Action** is a reusable executable contract composed of one or more capability invocations; Actions may be deterministic, model-assisted, or hybrid. | ACCEPTED |
 | D-07 | **Tool** is an exposure/interface mechanism for a model or client. It is not the canonical authority or semantic model. | ACCEPTED |
 | D-08 | Activation may resolve directly to an Action without a model. Model-mediated selection is optional. | ACCEPTED |
 | D-09 | Mission is optional durable intent; Task is bounded work; Run is a concrete execution instance. | ACCEPTED |
@@ -111,6 +111,18 @@ Model      = optional reasoning component
 | E-08 | Real Android/App Functions integration. | Adapter can be removed without changing core semantics. |
 | E-09 | Current MCP 2026-07-28 adapter path. | Protocol behavior remains outside core state/authority model. |
 
+## Research-derived experiments
+
+| ID | Experiment | Rationale |
+|---|---|---|
+| M-E1 | Bounded multi-step Action loop. | METATRON demonstrates that an agent can iteratively request more information; our version must preserve one policy boundary per invocation and explicit runtime budgets. |
+| M-E2 | Raw versus derived observation compression. | METATRON compresses long tool output. Measure context/token reduction while preserving verification-critical facts and source provenance. |
+| M-E3 | Typed Action parameters versus free-form command dispatch. | Test whether stable semantic Actions reduce invalid/injection-prone execution requests while maintaining task success. |
+| M-E4 | Local-model continuation through the same runtime. | Preserve METATRON's local-first usability while keeping model provider replaceability. |
+| M-E5 | Durable effect identity under retry/process death. | Convert stable identity from a deterministic primitive into actual duplicate-effect protection only after persistence/reconciliation exists. |
+| M-E6 | Evidence provenance chain for derived observations. | Ensure summaries/compression remain traceable to authoritative raw observations/artifacts. |
+| M-E7 | Evidence-to-report Action. | Carry METATRON's useful export workflow into our Artifact/Egress model without turning mutable reports into evidence. |
+
 ## Rejected / anti-goals
 
 | ID | Rejected design | Reason |
@@ -123,6 +135,8 @@ Model      = optional reasoning component
 | R-06 | Preferences as hidden permissions. | Preferences must never become an authorization bypass. |
 | R-07 | MCP/App Functions as the canonical internal domain model. | External protocols evolve and have different trust/lifecycle semantics. |
 | R-08 | General workflow engine, Capability Graph, swarm, plugin marketplace, or server tenancy in the core before measured need. | High complexity and exit cost without proven demand. |
+| R-09 | Free-form model-authored shell/command execution as a core Action interface. | Typed parameters and bounded capabilities provide a stronger authorization and verification boundary. |
+| R-10 | Treat model-compressed observations or model-generated risk ratings as authoritative evidence. | Compression and analysis are derived reasoning artifacts; authoritative evidence must remain attributable to observations/artifacts/verification. |
 
 ## Change control
 
