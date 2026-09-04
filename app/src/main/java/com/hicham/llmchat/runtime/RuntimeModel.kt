@@ -42,17 +42,25 @@ data class CapabilityInvocationSpec(
 
 data class ActionPlan(val invocations: List<CapabilityInvocationSpec> = emptyList())
 
+data class CapabilityExecution(
+    val output: Map<String, String> = emptyMap(),
+    val observations: List<Observation> = emptyList(),
+    val postcondition: Boolean = true
+)
+
+/**
+ * Action evaluation is deliberately effect-free. Capability side effects belong to CapabilityExecutor.
+ */
 data class ActionDefinition(
     val id: String,
     val version: Int,
     val purpose: String,
     val capabilities: List<CapabilityDescriptor>,
     val approvalMode: ApprovalMode = ApprovalMode.NEVER,
-    val execute: (Map<String, String>) -> ActionExecution,
+    val reduce: (Map<String, String>, List<CapabilityExecution>) -> ActionExecution,
     val plan: (Map<String, String>) -> ActionPlan = { ActionPlan() }
 )
 
-/** Execution result is deliberately effect-free; the ActionPlan is the canonical effect declaration. */
 data class ActionExecution(
     val output: Map<String, String> = emptyMap(),
     val observations: List<Observation> = emptyList(),

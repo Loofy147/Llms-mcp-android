@@ -17,10 +17,11 @@ class ActionCatalog(actions: List<ActionDefinition>) {
                     capabilities = listOf(
                         CapabilityDescriptor("runtime.status.read", EffectClass.READ_ONLY)
                     ),
-                    execute = {
+                    reduce = { _, capabilityResults ->
+                        val result = capabilityResults.single()
                         ActionExecution(
-                            output = mapOf("status" to "ok"),
-                            observations = listOf(Observation("status", "ok"))
+                            output = result.output,
+                            observations = listOf(Observation("status", result.output["status"] ?: "unknown"))
                         )
                     },
                     plan = {

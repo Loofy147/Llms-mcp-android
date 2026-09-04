@@ -6,6 +6,7 @@ import java.util.UUID
 class AgentRuntime(
     private val catalog: ActionCatalog,
     private val policy: PolicyEngine,
+    private val capabilityExecutor: CapabilityExecutor,
     private val store: RuntimeStore = InMemoryRuntimeStore()
 ) {
     fun activate(request: ActivationRequest): Run {
@@ -53,7 +54,8 @@ class AgentRuntime(
                 ).also(store::saveRun)
             }
 
-            val execution = action.execute(request.input)
+            val capabilityExecutions = invocations.map(capabilityExecutor::execute)
+            val execution = action.reduce(request.input, capabilityExecutions)
             val verification = Verification(
                 passed = execution.postcondition,
                 reason = if (execution.postcondition) "Postcondition satisfied" else "Postcondition failed"
@@ -65,7 +67,7 @@ class AgentRuntime(
                 activationSource = request.source,
                 authorizedBy = request.identity,
                 capabilityInvocations = invocations,
-                observations = execution.observations,
+                observations = capabilityExecutions.flatMap { it.observations } + execution.observations,
                 verification = verification
             )
             if (verification.passed) {
@@ -132,7 +134,7 @@ class AgentRuntime(
         version = 0,
         purpose = "missing",
         capabilities = emptyList(),
-        execute = { error("missing action") },
+        reduce = { _, _ -> error("missing action") },
         plan = { ActionPlan() }
     )
 }

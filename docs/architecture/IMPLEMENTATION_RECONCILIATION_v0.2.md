@@ -1,7 +1,7 @@
 # Implementation Reconciliation v0.2
 
 Status: Active engineering baseline
-Date: 2026-09-03
+Date: 2026-09-04
 
 This document freezes the distinction between accepted architecture and demonstrated implementation. It prevents architecture claims from being mistaken for completed implementation.
 
@@ -18,18 +18,20 @@ This document freezes the distinction between accepted architecture and demonstr
 - Run, Verification, and Evidence are execution concepts;
 - Mission is optional rather than mandatory for short actions;
 - external protocols/providers remain adapters;
-- ActionPlan is the canonical declaration of capability effects and is materialized before Action execution.
+- ActionPlan is the canonical declaration of capability effects;
+- CapabilityExecutor is the controlled execution boundary for materialized CapabilityInvocations.
 
 ## 2. Reconciliation matrix
 
 | Area | Target architecture | Current implementation | Status | Next proof/fix |
 |---|---|---|---|---|
-| Action semantics | Reusable Action above CapabilityInvocation | ActionDefinition has an explicit ActionPlan; execution result is effect-free | PROVISIONALLY ALIGNED | Add real CapabilityExecutor boundary |
+| Action semantics | Reusable Action above CapabilityInvocation | ActionDefinition declares ActionPlan and performs effect-free reduction of capability results | PROVISIONALLY ALIGNED | Validate with real capability adapters |
+| Capability execution | Every effect crosses one controlled executor boundary | CapabilityExecutor receives only validated, durably reserved invocations; missing executors fail closed | PROVISIONALLY VERIFIED | Add Android/device adapter and negative bypass tests |
 | Invocation identity | Explicit invocation/effect identity and attribution | Invocation id, effectId, action/version, scope, attribution; stable idempotency key supported | PROVISIONALLY VERIFIED | Validate identity across real side effects |
-| Effect reservation | No effect executes before durable duplicate decision | Runtime materializes the ActionPlan and atomically reserves all effect identities before execute | PROVISIONALLY VERIFIED | Add reconciliation/unknown-state recovery |
+| Effect reservation | No effect executes before durable duplicate decision | Runtime materializes the ActionPlan and atomically reserves all effect identities before executor calls | PROVISIONALLY VERIFIED | Add reconciliation/unknown-state recovery |
 | Run state | Durable lifecycle and restart recovery | JournalRuntimeStore persists Run snapshots; runtime accepts a durable store | PARTIAL | Wire durable store into application lifecycle and test Android restart |
 | Evidence | Attributable observations + verification + invocations | Evidence persisted as part of Run journal snapshots | PARTIAL | Define immutable evidence/append-only audit contract |
-| Direct execution | Action can run without Model | Deterministic path covered by unit tests | PROVISIONALLY VERIFIED | Android/real-device validation |
+| Direct execution | Action can run without Model | Deterministic path covered by unit tests and executor-backed proof | PROVISIONALLY VERIFIED | Android/real-device validation |
 | Policy | Independent authorization boundary | Minimal in-memory PolicyEngine | PARTIAL | Persistent policy/control-plane path |
 | Approval | Distinct from denial and bound to operation/context | WAITING_APPROVAL state only | PARTIAL | Persist approval context and replay protection |
 | Egress | Explicit local decision before protected data leaves device | Not implemented | OPEN | Introduce EgressDecision before remote model/MCP effects |
@@ -63,7 +65,7 @@ Rule: legacy tool operations must map into Action/Capability semantics rather th
 
 ### C-04 — Evidence durability — IMPROVED, NOT CLOSED
 
-Evidence is now included in durable Run journal snapshots through `JournalRuntimeStore` and can be restored across store instances.
+Evidence is included in durable Run journal snapshots through `JournalRuntimeStore` and can be restored across store instances.
 
 Rule: do not call this an immutable audit ledger until append-only evidence semantics, corruption handling, and Android restart validation are proven.
 
@@ -73,9 +75,15 @@ Rule: do not call this an immutable audit ledger until append-only evidence sema
 
 ### C-06 — Effect identity without full reconciliation — PARTIAL
 
-Stable effect identity is now backed by an atomic durable reservation journal. A repeated effect is blocked before Action execution, including after a new store instance reads the journal.
+Stable effect identity is backed by an atomic durable reservation journal. A repeated effect is blocked before executor invocation, including after a new store instance reads the journal.
 
-Remaining limitation: a reserved effect can become `UNKNOWN` after a crash or verification failure, and no reconciliation protocol yet decides whether it may safely resume.
+Remaining limitation: a reserved effect can become `UNKNOWN` after a crash or failed execution, and no reconciliation protocol yet decides whether it may safely resume.
+
+### C-07 — Direct Action side effects — RESOLVED FOR NEW CORE CONTRACT
+
+The runtime no longer calls an effect-capable Action closure. `ActionDefinition.reduce` is the effect-free reduction stage; capability effects are routed through `CapabilityExecutor`.
+
+Remaining limitation: this is an API/architecture boundary, not a proof that every future executor implementation is safe. Executor adapters must preserve invocation authority and must not self-grant permissions.
 
 ## 4. Evidence classification
 
@@ -93,19 +101,20 @@ Remaining limitation: a reserved effect can become `UNKNOWN` after a crash or ve
 1. Introduce canonical ActionPlan effect declarations.
 2. Make effect identity deterministic when an idempotency key is supplied.
 3. Validate declared capabilities and scope before execution.
-4. Atomically reserve the complete effect set before Action execution.
+4. Atomically reserve the complete effect set before execution.
 5. Persist Run state and Evidence snapshots through an append-only journal.
 6. Block replay across independent store instances using the same durable journal.
 7. Mark reserved effects `UNKNOWN` when execution cannot establish a verified completion.
+8. Move capability execution behind a dedicated CapabilityExecutor boundary.
 
 ### Next correction gates
 
-8. Introduce an explicit EgressDecision contract before protected remote model/MCP flows.
 9. Add persistent approval context bound to exact Action/version/scope/input and a one-use decision.
-10. Add effect reconciliation for `UNKNOWN` state and capability-specific recovery semantics.
-11. Move capability execution behind a dedicated CapabilityExecutor boundary.
-12. Move MCP from the vendor adapter to an internal protocol adapter boundary.
-13. Only then expand activation surfaces and richer Actions.
+10. Introduce an explicit EgressDecision contract before protected remote model/MCP flows.
+11. Add effect reconciliation for `UNKNOWN` state and capability-specific recovery semantics.
+12. Add real Android/device CapabilityExecutor adapters and Android process-death validation.
+13. Move MCP from the vendor adapter to an internal protocol adapter boundary.
+14. Only then expand activation surfaces and richer Actions.
 
 ## 6. Non-goals
 
