@@ -13,48 +13,27 @@ class AgentRuntime(
 ) {
     fun activate(request: ActivationRequest): Run {
         val action = catalog.get(request.actionId)
-            ?: return Run(
-                activation = request,
-                status = RunStatus.FAILED,
-                action = missingAction(request.actionId),
-                denialReason = "Unknown Action: ${request.actionId}"
-            ).also(store::saveRun)
+            ?: return Run(activation = request, status = RunStatus.FAILED, action = missingAction(request.actionId), denialReason = "Unknown Action: ${request.actionId}")
 
         return when (policy.evaluate(request, action)) {
-            PolicyDecision.DENY -> Run(
-                activation = request,
-                status = RunStatus.DENIED,
-                action = action,
-                denialReason = "Policy denied Action"
-            ).also(store::saveRun)
+            PolicyDecision.DENY -> Run(activation = request, status = RunStatus.DENIED, action = action, denialReason = "Policy denied Action").also(store::saveRun)
             PolicyDecision.APPROVAL_REQUIRED -> requestApproval(request, action)
             PolicyDecision.ALLOW -> execute(request, action, action.plan(request.input))
         }
     }
 
-    fun resolveApproval(
-        runId: String,
-        approvalId: String,
-        decision: ApprovalDecision,
-        approverIdentity: String
-    ): Run? {
+    fun resolveApproval(runId: String, approvalId: String, decision: ApprovalDecision, approverIdentity: String): Run? {
         val run = store.loadRun(runId, catalog) ?: return null
         if (run.status != RunStatus.WAITING_APPROVAL || run.approvalId != approvalId) return run
-        val context = approvalStore.load(approvalId) ?: return run.copy(
-            status = RunStatus.FAILED,
-            denialReason = "Approval context not found"
-        ).also(store::saveRun)
-        val action = catalog.get(context.actionId) ?: return run.copy(
-            status = RunStatus.FAILED,
-            denialReason = "Approved Action no longer exists"
-        ).also(store::saveRun)
+        val context = approvalStore.load(approvalId) ?: return run.copy(status = RunStatus.FAILED, denialReason = "Approval context not found").also(store::saveRun)
+        val action = catalog.get(context.actionId) ?: return run.copy(status = RunStatus.FAILED, denialReason = "Approved Action no longer exists").also(store::saveRun)
         if (context.runId != runId || action.version != context.actionVersion || run.activation.identity != context.requesterIdentity || run.activation.input != context.input) {
             return run.copy(status = RunStatus.FAILED, denialReason = "Approval context conflict").also(store::saveRun)
         }
         val currentPlan = runCatching { action.plan(context.input) }.getOrElse {
             return run.copy(status = RunStatus.FAILED, denialReason = it.message ?: "Approval plan failed").also(store::saveRun)
         }
-        if (fingerprint(context.requesterIdentity, action, currentPlan) != context.fingerprint || currentPlan != context.plannedInvocations) {
+        if (fingerprint(context.requesterIdentity, action, currentPlan) != context.fingerprint || currentPlan != ActionPlan(context.plannedInvocations)) {
             return run.copy(status = RunStatus.FAILED, denialReason = "Approved operation no longer matches").also(store::saveRun)
         }
         if (decision == ApprovalDecision.DENIED) {
@@ -67,7 +46,7 @@ class AgentRuntime(
             return run.copy(status = RunStatus.DENIED, denialReason = "Policy denied Action after approval").also(store::saveRun)
         }
         return when (approvalStore.consume(approvalId, runId, context.requesterIdentity, context.fingerprint, decision, approverIdentity)) {
-            ApprovalConsumption.CONSUMED -> execute(run.activation, action, currentPlan)
+            ApprovalConsumption.CONSUMED -> execute(run.activation, action, currentPlan, run)
             ApprovalConsumption.NOT_PENDING -> run.copy(status = RunStatus.FAILED, denialReason = "Approval already consumed").also(store::saveRun)
             ApprovalConsumption.CONFLICT -> run.copy(status = RunStatus.FAILED, denialReason = "Approval context conflict").also(store::saveRun)
             ApprovalConsumption.NOT_FOUND -> run.copy(status = RunStatus.FAILED, denialReason = "Approval context not found").also(store::saveRun)
@@ -79,15 +58,7 @@ class AgentRuntime(
         return try {
             val plan = action.plan(request.input)
             validatePlan(action, plan.invocations)
-            val context = ApprovalContext(
-                runId = run.id,
-                requesterIdentity = request.identity,
-                actionId = action.id,
-                actionVersion = action.version,
-                input = request.input,
-                plannedInvocations = plan.invocations,
-                fingerprint = fingerprint(request.identity, action, plan)
-            )
+            val context = ApprovalContext(runId = run.id, requesterIdentity = request.identity, actionId = action.id, actionVersion = action.version, input = request.input, plannedInvocations = plan.invocations, fingerprint = fingerprint(request.identity, action, plan))
             approvalStore.save(context)
             run.copy(approvalId = context.approvalId, denialReason = "Explicit approval required")
         } catch (e: Exception) {
@@ -95,8 +66,8 @@ class AgentRuntime(
         }.also(store::saveRun)
     }
 
-    private fun execute(request: ActivationRequest, action: ActionDefinition, plan: ActionPlan): Run {
-        val run = Run(activation = request, status = RunStatus.RUNNING, action = action)
+    private fun execute(request: ActivationRequest, action: ActionDefinition, plan: ActionPlan, existingRun: Run? = null): Run {
+        val run = existingRun?.copy(status = RunStatus.RUNNING) ?: Run(activation = request, status = RunStatus.RUNNING, action = action)
         store.saveRun(run)
         var invocations = emptyList<CapabilityInvocation>()
         return try {
