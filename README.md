@@ -4,70 +4,97 @@ A native Android Kotlin/Jetpack Compose project evolving into a **user-owned mob
 
 ## What the project is
 
-The product idea is simple:
+The product is a personal assistant on the phone that can execute bounded operations, not only converse.
 
-> **A personal assistant on the phone that can actually execute things, not only talk.**
+The application now has an explicit application-level `AssistantRuntime` facade and a canonical `AgentRuntime` control plane. Chat remains a user-facing reasoning surface; it is not an independent effect authority.
 
-Simple/repeated operations can execute directly and deterministically. Tasks that require interpretation or choice can use an optional Model. In both cases, local policy remains the authority boundary.
+## Canonical execution model
+
+```text
+Surface
+  -> Activation / reasoning request
+  -> Action
+  -> Policy
+  -> Approval (when required)
+  -> Egress (when implemented/required)
+  -> Run
+  -> CapabilityInvocation
+  -> CapabilityExecutor
+  -> Observation
+  -> Verification
+  -> Evidence
+```
+
+The model may reason and request a tool, but a model response never authorizes an effect.
 
 ## Current architecture baseline
 
-The active design baseline is `docs/architecture/NORTH_STAR_ARCHITECTURE_v0.2.md`.
-
-The central separation is:
-
-```text
-Activation -> Action -> CapabilityInvocation -> execution
-                  ^
-                  |
-             optional Model
-
-Capability = primitive controlled effect
-Action     = reusable execution contract
-Tool       = exposure/interface for a model/client
-Model      = optional reasoning component
-```
-
-The model may select an Action from a policy-filtered set, but model output never authorizes execution. Deterministic Actions can execute without any model. Chat is one activation surface, not the runtime itself.
-
-## Architecture documents
-
 - `docs/architecture/NORTH_STAR_ARCHITECTURE_v0.2.md`
+- `docs/architecture/IMPLEMENTATION_RECONCILIATION_v0.2.md`
+- `docs/architecture/WHOLE_APP_UNIFICATION_v0.1.md`
 - `docs/architecture/DECISION_REGISTER_v0.2.md`
 - `docs/architecture/ASSUMPTION_REGISTER_v0.2.md`
 - `docs/architecture/REVIEW_CHECKLIST_v0.2.md`
 - `docs/architecture/ACTION_MODEL_v0.2.md`
-- `docs/architecture/IMPLEMENTATION_RECONCILIATION_v0.2.md`
 - `docs/architecture/ECOSYSTEM_RESEARCH_2026-09.md`
 - `docs/security/PRIVACY_SECURITY_INVARIANTS_v0.2.md`
 
-The reconciliation document explicitly separates accepted architecture from implemented evidence and tracks contradictions that still remain.
+## Current implementation
 
-## Current implementation slice
+### Unified application boundary
 
-The open `agent-runtime/vertical-slice-v0.1` branch introduces the first runtime proof: `Activation`, `Action`, `Capability`, `Policy`, `Run`, `Observation`, `Verification`, and `Evidence`, with deterministic execution and explicit approval-vs-denial semantics.
+`MainActivity` constructs one `AssistantRuntime`. `ChatViewModel` talks to that facade instead of constructing or calling a provider directly.
 
-It also introduces:
+### Canonical local tool path
 
-- a provider-neutral `ModelProvider` boundary with the current Anthropic implementation behind an adapter;
-- a Keystore-backed `CredentialStore` for API/MCP authorization material;
-- a one-time migration path away from the previous plaintext settings representation;
-- CI unit-test execution before debug APK assembly.
+Model-facing tool descriptions live in `ToolRegistry`. They contain no effectful execution method.
 
-This is still a vertical proof, not a completed production runtime.
+A local model tool call is translated by `RuntimeToolGateway` into:
 
-## Known open gaps
+```text
+Model tool call
+  -> ActivationSource.MODEL
+  -> ActionCatalog
+  -> PolicyEngine
+  -> AgentRuntime
+  -> CapabilityInvocation
+  -> CapabilityExecutor
+```
 
-- Run and Evidence are not yet durable across process death/restart.
-- Approval context is not yet persisted with replay protection.
-- Explicit local data-egress policy is not yet implemented.
-- MCP still lives in the current Anthropic adapter rather than a native internal MCP adapter.
-- The current catalog/executor remains deliberately small and deterministic.
-- Conversation history is still in-memory.
-- Android-native activation adapters beyond the current UI path are not yet implemented.
+The built-in local tools are represented as canonical Actions:
 
-These gaps are tracked as engineering gates, not hidden behind feature claims.
+- `get_current_time` -> `native.current_time` -> `device.time.read`
+- `calculate` -> `native.calculate` -> `device.calculator.evaluate`
+
+Arithmetic is explicitly bounded and does not use `eval` or a scripting engine.
+
+### Durable control state
+
+`AgentRuntime` uses durable runtime and approval journals through `AndroidRuntimeFactory`. Effect identity, duplicate blocking, unknown-effect reconciliation state, and persistent approval context are controlled by the runtime boundary.
+
+Approval decisions are one-use and bound to the exact Run, requester identity, Action/version, input, and planned invocations.
+
+### Secrets and settings
+
+Credentials are isolated in a Keystore-backed `CredentialStore`; ordinary settings do not persist plaintext API/MCP credentials. MCP credential material is removed when its server is removed through the settings surface.
+
+## Explicitly not complete
+
+The project is still a vertical proof rather than a production-ready agent runtime.
+
+Open gates include:
+
+- explicit local `EgressDecision` before protected remote data flows;
+- Android process-death/restart integration validation;
+- capability-specific reconciliation adapters;
+- extraction of MCP into an internal protocol adapter rather than leaving the current connector semantics inside the Anthropic provider;
+- persistent conversation history;
+- broader Android-native activation surfaces;
+- production policy/profile management;
+- backup/export/privacy review beyond the current credential boundary.
+
+These are engineering gates, not hidden feature claims.
 
 ## Build
 
-`.github/workflows/build-apk.yml` provides a hosted debug build path and runs JVM unit tests before assembling the APK. A normal Android development environment can build the project after dependency synchronization.
+`.github/workflows/build-apk.yml` runs JVM unit tests before assembling the debug APK and uploading it as a workflow artifact.
