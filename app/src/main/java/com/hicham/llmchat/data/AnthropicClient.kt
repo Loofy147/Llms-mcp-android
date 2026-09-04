@@ -4,6 +4,10 @@ import com.hicham.llmchat.model.AppSettings
 import com.hicham.llmchat.model.ChatMessage
 import com.hicham.llmchat.model.ContentBlock
 import com.hicham.llmchat.model.toJson
+import com.hicham.llmchat.runtime.EgressDataClass
+import com.hicham.llmchat.runtime.EgressDecision
+import com.hicham.llmchat.runtime.EgressPolicy
+import com.hicham.llmchat.runtime.EgressRequest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -23,11 +27,13 @@ interface ConversationListener {
 /**
  * Vendor transport adapter. It owns HTTP/stream parsing, but local effectful tool execution
  * is delegated to RuntimeToolGateway so the application keeps one execution authority.
+ * Every remote request also crosses the local egress policy boundary.
  * MCP connector transport remains provider-owned for now.
  */
 class AnthropicClient(
     private val settings: AppSettings,
-    private val runtimeToolGateway: RuntimeToolGateway
+    private val runtimeToolGateway: RuntimeToolGateway,
+    private val egressPolicy: EgressPolicy
 ) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -107,8 +113,26 @@ class AnthropicClient(
         val target = history.last()
         val bodyJson = buildRequestBody(history.dropLast(1))
 
+        when (val decision = egressPolicy.decide(
+            EgressRequest(
+                destination = ANTHROPIC_URL,
+                purpose = "Remote model inference and MCP connector request",
+                dataClasses = buildSet {
+                    add(EgressDataClass.USER_CONTENT)
+                    add(EgressDataClass.USER_CONFIGURATION)
+                    add(EgressDataClass.CREDENTIAL)
+                }
+            )
+        )) {
+            EgressDecision.ALLOW -> Unit
+            is EgressDecision.DENY -> {
+                listener.onError("Egress denied: ${decision.reason}")
+                return null
+            }
+        }
+
         val reqBuilder = Request.Builder()
-            .url("https://api.anthropic.com/v1/messages")
+            .url(ANTHROPIC_URL)
             .header("x-api-key", settings.apiKey)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -194,5 +218,9 @@ class AnthropicClient(
         JSONObject(body).getJSONObject("error").getString("message")
     } catch (_: Exception) {
         "HTTP $httpCode: $body"
+    }
+
+    companion object {
+        private const val ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
     }
 }
