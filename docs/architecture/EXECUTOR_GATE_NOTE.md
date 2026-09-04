@@ -1,1 +1,0 @@
-Capability Executor gate is implemented on agent-runtime/capability-executor-v0.1. The runtime reserves effects before invoking CapabilityExecutor; Actions reduce only executor results.
