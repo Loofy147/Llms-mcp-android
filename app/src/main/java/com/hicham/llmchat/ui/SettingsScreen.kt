@@ -64,7 +64,7 @@ fun SettingsScreen(viewModel: ChatViewModel, onDone: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    "Stored locally on-device only (SharedPreferences). Sent only to api.anthropic.com.",
+                    "Stored locally on-device in protected credential storage. Sent only to api.anthropic.com.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(modifier = Modifier.height(16.dp))
@@ -102,8 +102,7 @@ fun SettingsScreen(viewModel: ChatViewModel, onDone: () -> Unit) {
             item {
                 Text("MCP servers", style = MaterialTheme.typography.labelLarge)
                 Text(
-                    "Each one is passed to Claude via the API's MCP connector — Anthropic's servers " +
-                        "handle the connection and tool calls; this app just forwards the config.",
+                    "Configured MCP servers are forwarded by the provider adapter. Local authorization remains owned by this application.",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -113,7 +112,10 @@ fun SettingsScreen(viewModel: ChatViewModel, onDone: () -> Unit) {
                         Text(server.name, style = MaterialTheme.typography.bodyMedium)
                         Text(server.url, style = MaterialTheme.typography.bodySmall)
                     }
-                    IconButton(onClick = { servers = servers.filter { it != server } }) {
+                    IconButton(onClick = {
+                        viewModel.removeMcpServer(server)
+                        servers = servers.filter { it != server }
+                    }) {
                         Icon(Icons.Filled.Delete, contentDescription = "Remove")
                     }
                 }
