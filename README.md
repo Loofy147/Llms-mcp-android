@@ -16,7 +16,7 @@ Surface
   -> Action
   -> Policy
   -> Approval (when required)
-  -> Egress (when implemented/required)
+  -> Egress (when remote/protected data is involved)
   -> Run
   -> CapabilityInvocation
   -> CapabilityExecutor
@@ -74,6 +74,12 @@ Arithmetic is explicitly bounded and does not use `eval` or a scripting engine.
 
 Approval decisions are one-use and bound to the exact Run, requester identity, Action/version, input, and planned invocations.
 
+### Local egress boundary
+
+Remote model requests now cross an explicit `EgressPolicy` before the HTTP request is executed. The current policy allows only HTTPS requests to the explicit provider host `api.anthropic.com`; destination validation rejects unlisted hosts, non-HTTPS destinations, and credentials embedded in destination URLs.
+
+This is a boundary implementation, not yet a complete data-classification/redaction system.
+
 ### Secrets and settings
 
 Credentials are isolated in a Keystore-backed `CredentialStore`; ordinary settings do not persist plaintext API/MCP credentials. MCP credential material is removed when its server is removed through the settings surface.
@@ -84,7 +90,7 @@ The project is still a vertical proof rather than a production-ready agent runti
 
 Open gates include:
 
-- explicit local `EgressDecision` before protected remote data flows;
+- richer local data classification, minimization, and redaction before egress;
 - Android process-death/restart integration validation;
 - capability-specific reconciliation adapters;
 - extraction of MCP into an internal protocol adapter rather than leaving the current connector semantics inside the Anthropic provider;
