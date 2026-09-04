@@ -5,6 +5,16 @@ import java.io.File
 
 /** Single application composition root for the local control plane. */
 object AndroidRuntimeFactory {
+    @Volatile
+    private var recoveryPerformedInProcess = false
+
+    @Synchronized
+    private fun recoverOncePerProcess(store: RuntimeStore) {
+        if (recoveryPerformedInProcess) return
+        store.recoverInterruptedEffects()
+        recoveryPerformedInProcess = true
+    }
+
     fun create(context: Context): AgentRuntime {
         val app = context.applicationContext
         val runtimeDir = File(app.filesDir, "agent-runtime")
@@ -25,7 +35,7 @@ object AndroidRuntimeFactory {
         )
 
         val runtimeStore = JournalRuntimeStore(File(runtimeDir, "runtime.journal"))
-        runtimeStore.recoverInterruptedEffects()
+        recoverOncePerProcess(runtimeStore)
 
         return AgentRuntime(
             catalog = ActionCatalog(NativeActions.catalog()),
