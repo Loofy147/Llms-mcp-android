@@ -24,11 +24,14 @@ object AndroidRuntimeFactory {
             )
         )
 
+        val runtimeStore = JournalRuntimeStore(File(runtimeDir, "runtime.journal"))
+        runtimeStore.recoverInterruptedEffects()
+
         return AgentRuntime(
             catalog = ActionCatalog(NativeActions.catalog()),
             policy = PolicyEngine(),
             capabilityExecutor = capabilityExecutor,
-            store = JournalRuntimeStore(File(runtimeDir, "runtime.journal")),
+            store = runtimeStore,
             approvalStore = JournalApprovalStore(File(runtimeDir, "approvals.journal"))
         )
     }
