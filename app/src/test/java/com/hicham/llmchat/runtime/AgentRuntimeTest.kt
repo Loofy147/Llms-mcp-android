@@ -15,11 +15,11 @@ class AgentRuntimeTest {
             version = 1,
             purpose = "Deterministic calculation",
             capabilities = listOf(CapabilityDescriptor("calculator.evaluate", EffectClass.READ_ONLY)),
-            execute = { input ->
-                val value = input["expression"] ?: error("Missing expression")
+            reduce = { input, results ->
+                val result = results.single()
                 ActionExecution(
-                    output = mapOf("result" to "42"),
-                    observations = listOf(Observation("expression", value), Observation("result", "42"))
+                    output = result.output,
+                    observations = listOf(Observation("expression", input["expression"] ?: ""))
                 )
             },
             plan = { input ->
@@ -27,7 +27,10 @@ class AgentRuntimeTest {
                 ActionPlan(listOf(CapabilityInvocationSpec("calculator.evaluate", parameters = mapOf("expression" to value))))
             }
         )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
+        val capabilityExecutor = RegistryCapabilityExecutor(
+            mapOf("calculator.evaluate" to { CapabilityExecution(output = mapOf("result" to "42"), observations = listOf(Observation("result", "42"))) })
+        )
+        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), capabilityExecutor)
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "calculate", mapOf("expression" to "40 + 2")))
         assertEquals(RunStatus.SUCCEEDED, run.status)
         assertEquals("42", run.output["result"])
@@ -46,9 +49,9 @@ class AgentRuntimeTest {
             version = 1,
             purpose = "high impact test",
             capabilities = listOf(CapabilityDescriptor("danger.effect", EffectClass.HIGH_IMPACT)),
-            execute = { error("must not execute") }
+            reduce = { _, _ -> error("must not reduce") }
         )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
+        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), RegistryCapabilityExecutor(emptyMap()))
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "danger"))
         assertEquals(RunStatus.DENIED, run.status)
         assertNotNull(run.denialReason)
@@ -63,9 +66,9 @@ class AgentRuntimeTest {
             purpose = "write a note",
             capabilities = listOf(CapabilityDescriptor("file.write", EffectClass.REVERSIBLE)),
             approvalMode = ApprovalMode.REQUIRED,
-            execute = { error("must not execute before approval") }
+            reduce = { _, _ -> error("must not reduce before approval") }
         )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
+        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), RegistryCapabilityExecutor(emptyMap()))
         val run = runtime.activate(ActivationRequest(ActivationSource.QUICK_ACTION, "write_note"))
         assertEquals(RunStatus.WAITING_APPROVAL, run.status)
         assertEquals("Explicit approval required", run.denialReason)
@@ -78,15 +81,17 @@ class AgentRuntimeTest {
             version = 1,
             purpose = "test activation convergence",
             capabilities = listOf(CapabilityDescriptor("local.ping", EffectClass.READ_ONLY)),
-            execute = {
-                ActionExecution(
-                    output = mapOf("ok" to "true"),
-                    observations = listOf(Observation("ok", "true"))
-                )
+            reduce = { _, results ->
+                val result = results.single()
+                ActionExecution(output = result.output, observations = result.observations)
             },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("local.ping"))) }
         )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
+        val runtime = AgentRuntime(
+            ActionCatalog(listOf(action)),
+            PolicyEngine(),
+            RegistryCapabilityExecutor(mapOf("local.ping" to { CapabilityExecution(output = mapOf("ok" to "true"), observations = listOf(Observation("ok", "true"))) }))
+        )
         val userRun = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "ping"))
         val automationRun = runtime.activate(ActivationRequest(ActivationSource.AUTOMATION, "ping"))
         assertEquals(RunStatus.SUCCEEDED, userRun.status)
@@ -103,15 +108,14 @@ class AgentRuntimeTest {
             version = 1,
             purpose = "verification test",
             capabilities = listOf(CapabilityDescriptor("test.effect", EffectClass.READ_ONLY)),
-            execute = {
-                ActionExecution(
-                    postcondition = false,
-                    observations = listOf(Observation("claimed", "done"))
-                )
-            },
+            reduce = { _, results -> ActionExecution(postcondition = results.single().postcondition, observations = listOf(Observation("claimed", "done"))) },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("test.effect"))) }
         )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
+        val runtime = AgentRuntime(
+            ActionCatalog(listOf(action)),
+            PolicyEngine(),
+            RegistryCapabilityExecutor(mapOf("test.effect" to { CapabilityExecution(postcondition = false) }))
+        )
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "bad_postcondition"))
         assertEquals(RunStatus.FAILED, run.status)
         assertEquals(false, run.evidence?.verification?.passed)
@@ -120,7 +124,7 @@ class AgentRuntimeTest {
 
     @Test
     fun missingActionDoesNotEnterExecution() {
-        val runtime = AgentRuntime(ActionCatalog.demo(), PolicyEngine())
+        val runtime = AgentRuntime(ActionCatalog.demo(), PolicyEngine(), RegistryCapabilityExecutor(emptyMap()))
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "missing"))
         assertEquals(RunStatus.FAILED, run.status)
         assertNull(run.evidence)
@@ -134,13 +138,17 @@ class AgentRuntimeTest {
             version = 1,
             purpose = "stable effect identity test",
             capabilities = listOf(CapabilityDescriptor("message.send", EffectClass.REVERSIBLE)),
-            execute = {
-                executions += 1
-                ActionExecution()
-            },
+            reduce = { _, _ -> ActionExecution() },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("message.send", idempotencyKey = "message-123"))) }
         )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
+        val runtime = AgentRuntime(
+            ActionCatalog(listOf(action)),
+            PolicyEngine(),
+            RegistryCapabilityExecutor(mapOf("message.send" to {
+                executions += 1
+                CapabilityExecution()
+            }))
+        )
         val first = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "send_once"))
         val retry = runtime.activate(ActivationRequest(ActivationSource.AUTOMATION, "send_once"))
         val firstEffect = first.evidence?.capabilityInvocations?.single()?.effectId
@@ -158,11 +166,12 @@ class AgentRuntimeTest {
             version = 1,
             purpose = "scope test",
             capabilities = listOf(CapabilityDescriptor("shared.effect", EffectClass.REVERSIBLE)),
-            execute = { ActionExecution() },
+            reduce = { _, _ -> ActionExecution() },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("shared.effect", idempotencyKey = "same-key"))) }
         )
         val actionB = actionA.copy(id = "action_b")
-        val runtime = AgentRuntime(ActionCatalog(listOf(actionA, actionB)), PolicyEngine())
+        val executor = RegistryCapabilityExecutor(mapOf("shared.effect" to { CapabilityExecution() }))
+        val runtime = AgentRuntime(ActionCatalog(listOf(actionA, actionB)), PolicyEngine(), executor)
         val effectA = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "action_a")).evidence?.capabilityInvocations?.single()?.effectId
         val effectB = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "action_b")).evidence?.capabilityInvocations?.single()?.effectId
         assertNotEquals(effectA, effectB)
@@ -170,66 +179,75 @@ class AgentRuntimeTest {
 
     @Test
     fun undeclaredCapabilityCannotBeInvoked() {
-        var executed = false
+        var reduced = false
         val action = ActionDefinition(
             id = "invalid",
             version = 1,
             purpose = "declaration enforcement",
             capabilities = listOf(CapabilityDescriptor("declared", EffectClass.READ_ONLY)),
-            execute = {
-                executed = true
-                ActionExecution()
-            },
+            reduce = { _, _ -> reduced = true; ActionExecution() },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("not-declared"))) }
         )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
+        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), RegistryCapabilityExecutor(emptyMap()))
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "invalid"))
         assertEquals(RunStatus.FAILED, run.status)
-        assertEquals(false, executed)
+        assertEquals(false, reduced)
         assertNull(run.evidence)
     }
 
     @Test
     fun invocationCannotExceedDeclaredScope() {
-        var executed = false
+        var reduced = false
         val action = ActionDefinition(
             id = "scoped",
             version = 1,
             purpose = "scope enforcement",
             capabilities = listOf(CapabilityDescriptor("file.read", EffectClass.READ_ONLY, setOf("invoices"))),
-            execute = {
-                executed = true
-                ActionExecution()
-            },
+            reduce = { _, _ -> reduced = true; ActionExecution() },
             plan = { ActionPlan(listOf(CapabilityInvocationSpec("file.read", setOf("private")))) }
         )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
+        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), RegistryCapabilityExecutor(emptyMap()))
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "scoped"))
         assertEquals(RunStatus.FAILED, run.status)
-        assertEquals(false, executed)
+        assertEquals(false, reduced)
         assertNull(run.evidence)
     }
 
     @Test
     fun duplicateEffectIdentityInsideOnePlanIsRejectedBeforeExecution() {
-        var executed = false
+        var reduced = false
         val spec = CapabilityInvocationSpec("message.send", idempotencyKey = "same")
         val action = ActionDefinition(
             id = "duplicate",
             version = 1,
             purpose = "duplicate identity",
             capabilities = listOf(CapabilityDescriptor("message.send", EffectClass.REVERSIBLE)),
-            execute = {
-                executed = true
-                ActionExecution()
-            },
+            reduce = { _, _ -> reduced = true; ActionExecution() },
             plan = { ActionPlan(listOf(spec, spec)) }
         )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
+        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), RegistryCapabilityExecutor(emptyMap()))
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "duplicate"))
         assertEquals(RunStatus.FAILED, run.status)
-        assertEquals(false, executed)
+        assertEquals(false, reduced)
         assertEquals("Action plan contains duplicate effect identities", run.denialReason)
+    }
+
+    @Test
+    fun capabilityExecutorFailureCannotFallBackToActionReduction() {
+        var reduced = false
+        val action = ActionDefinition(
+            id = "executor_failure",
+            version = 1,
+            purpose = "executor boundary",
+            capabilities = listOf(CapabilityDescriptor("failing.effect", EffectClass.REVERSIBLE)),
+            reduce = { _, _ -> reduced = true; ActionExecution() },
+            plan = { ActionPlan(listOf(CapabilityInvocationSpec("failing.effect"))) }
+        )
+        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), RegistryCapabilityExecutor(emptyMap()))
+        val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "executor_failure"))
+        assertEquals(RunStatus.FAILED, run.status)
+        assertEquals(false, reduced)
+        assertEquals("No executor registered for failing.effect", run.denialReason)
     }
 
     @Test
@@ -241,11 +259,11 @@ class AgentRuntimeTest {
             version = 1,
             purpose = "durability",
             capabilities = emptyList(),
-            execute = { ActionExecution(output = mapOf("status" to "ok")) }
+            reduce = { _, _ -> ActionExecution(output = mapOf("status" to "ok")) }
         )
         val catalog = ActionCatalog(listOf(action))
         val firstStore = JournalRuntimeStore(journal)
-        val first = AgentRuntime(catalog, PolicyEngine(), firstStore)
+        val first = AgentRuntime(catalog, PolicyEngine(), RegistryCapabilityExecutor(emptyMap()), firstStore)
             .activate(ActivationRequest(ActivationSource.USER_UI, "persisted", identity = "tester"))
 
         val secondStore = JournalRuntimeStore(journal)
