@@ -16,13 +16,21 @@ class ActionCatalog(actions: List<ActionDefinition>) {
                     purpose = "Return a deterministic local runtime status without model inference.",
                     capabilities = listOf(
                         CapabilityDescriptor("runtime.status.read", EffectClass.READ_ONLY)
-                    )
-                ) {
-                    ActionExecution(
-                        output = mapOf("status" to "ok"),
-                        observations = listOf(Observation("status", "ok"))
-                    )
-                }
+                    ),
+                    execute = {
+                        ActionExecution(
+                            output = mapOf("status" to "ok"),
+                            observations = listOf(Observation("status", "ok"))
+                        )
+                    },
+                    plan = {
+                        ActionPlan(
+                            invocations = listOf(
+                                CapabilityInvocationSpec("runtime.status.read")
+                            )
+                        )
+                    }
+                )
             )
         )
     }
