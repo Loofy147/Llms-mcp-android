@@ -45,8 +45,9 @@ class AgentRuntimeTest {
             id = "danger",
             version = 1,
             purpose = "high impact test",
-            capabilities = listOf(CapabilityDescriptor("danger.effect", EffectClass.HIGH_IMPACT))
-        ) { error("must not execute") }
+            capabilities = listOf(CapabilityDescriptor("danger.effect", EffectClass.HIGH_IMPACT)),
+            execute = { error("must not execute") }
+        )
         val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "danger"))
         assertEquals(RunStatus.DENIED, run.status)
@@ -61,8 +62,9 @@ class AgentRuntimeTest {
             version = 1,
             purpose = "write a note",
             capabilities = listOf(CapabilityDescriptor("file.write", EffectClass.REVERSIBLE)),
-            approvalMode = ApprovalMode.REQUIRED
-        ) { error("must not execute before approval") }
+            approvalMode = ApprovalMode.REQUIRED,
+            execute = { error("must not execute before approval") }
+        )
         val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine())
         val run = runtime.activate(ActivationRequest(ActivationSource.QUICK_ACTION, "write_note"))
         assertEquals(RunStatus.WAITING_APPROVAL, run.status)
