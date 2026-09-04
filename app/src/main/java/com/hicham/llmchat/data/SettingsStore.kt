@@ -8,11 +8,7 @@ import org.json.JSONObject
 
 /**
  * Stores non-secret application settings.
- *
- * Credentials are deliberately kept in CredentialStore, backed by Android
- * Keystore. A one-time compatibility migration imports legacy plaintext
- * credentials from the previous prototype and removes them from ordinary
- * settings afterward.
+ * Credentials are isolated in CredentialStore, backed by Android Keystore.
  */
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -20,7 +16,6 @@ class SettingsStore(context: Context) {
 
     fun load(): AppSettings {
         migrateLegacyCredentials()
-
         val servers = mutableListOf<McpServerConfig>()
         val arr = JSONArray(prefs.getString(KEY_MCP_SERVERS, "[]") ?: "[]")
         for (i in 0 until arr.length()) {
@@ -45,14 +40,13 @@ class SettingsStore(context: Context) {
 
     fun save(settings: AppSettings) {
         val arr = JSONArray()
-        for (s in settings.mcpServers) {
+        for (server in settings.mcpServers) {
             arr.put(JSONObject().apply {
-                put("name", s.name)
-                put("url", s.url)
+                put("name", server.name)
+                put("url", server.url)
             })
-            credentials.writeMcpToken(s.name, s.authorizationToken)
+            credentials.writeMcpToken(server.name, server.authorizationToken)
         }
-
         credentials.writeApiKey(settings.apiKey)
         prefs.edit()
             .putString(KEY_MODEL, settings.model)
@@ -63,11 +57,14 @@ class SettingsStore(context: Context) {
             .apply()
     }
 
+    /** Deletes credential material for a removed MCP server without touching other settings. */
+    fun deleteMcpServerCredential(serverName: String) {
+        credentials.deleteMcpToken(serverName)
+    }
+
     private fun migrateLegacyCredentials() {
         val legacyApiKey = prefs.getString(KEY_API_KEY, null)
-        if (!legacyApiKey.isNullOrBlank()) {
-            credentials.migrateLegacyApiKey(legacyApiKey)
-        }
+        if (!legacyApiKey.isNullOrBlank()) credentials.migrateLegacyApiKey(legacyApiKey)
 
         val legacyServers = runCatching {
             JSONArray(prefs.getString(KEY_MCP_SERVERS, "[]") ?: "[]")
@@ -76,15 +73,10 @@ class SettingsStore(context: Context) {
             val server = legacyServers.optJSONObject(i) ?: continue
             val name = server.optString("name").trim()
             val token = server.optString("authorization_token").ifBlank { null }
-            if (name.isNotBlank() && token != null) {
-                credentials.writeMcpToken(name, token)
-            }
+            if (name.isNotBlank() && token != null) credentials.writeMcpToken(name, token)
         }
 
-        // Remove only the legacy plaintext fields. Non-secret settings remain.
-        if (!legacyApiKey.isNullOrBlank()) {
-            prefs.edit().remove(KEY_API_KEY).apply()
-        }
+        if (!legacyApiKey.isNullOrBlank()) prefs.edit().remove(KEY_API_KEY).apply()
         val sanitizedServers = JSONArray()
         for (i in 0 until legacyServers.length()) {
             val server = legacyServers.optJSONObject(i) ?: continue
@@ -98,7 +90,7 @@ class SettingsStore(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "llm_chat_settings"
-        private const val KEY_API_KEY = "api_key" // legacy only; never written now
+        private const val KEY_API_KEY = "api_key"
         private const val KEY_MODEL = "model"
         private const val KEY_SYSTEM_PROMPT = "system_prompt"
         private const val KEY_MCP_SERVERS = "mcp_servers"
