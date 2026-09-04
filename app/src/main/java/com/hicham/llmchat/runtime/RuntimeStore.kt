@@ -50,9 +50,7 @@ private data class StoredEffect(
             actionVersion == other.actionVersion && scope == other.scope && attributedTo == other.attributedTo &&
             parameters == other.parameters
 
-    fun record() = EffectRecord(
-        effectId, runId, capabilityId, actionId, actionVersion, scope, attributedTo, parameters, status
-    )
+    fun record() = EffectRecord(effectId, runId, capabilityId, actionId, actionVersion, scope, attributedTo, parameters, status)
 
     fun encode(): String = listOf(
         "E", Codec.encode(effectId), Codec.encode(runId), Codec.encode(capabilityId), Codec.encode(actionId),
@@ -89,9 +87,7 @@ class InMemoryRuntimeStore : RuntimeStore {
     override fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation {
         if (invocations.map { it.effectId }.distinct().size != invocations.size) return EffectReservation.CONFLICT
         val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
-        if (incoming.any { e -> effects[e.effectId]?.let { !it.compatibleWith(e) } == true }) {
-            return EffectReservation.CONFLICT
-        }
+        if (incoming.any { e -> effects[e.effectId]?.let { !it.compatibleWith(e) } == true }) return EffectReservation.CONFLICT
         if (incoming.any { effects.containsKey(it.effectId) }) return EffectReservation.REPLAY_BLOCKED
         incoming.forEach { effects[it.effectId] = it }
         return EffectReservation.RESERVED
@@ -105,11 +101,7 @@ class InMemoryRuntimeStore : RuntimeStore {
         effects[effectId]?.let { effects[effectId] = it.copy(status = EffectStatus.UNKNOWN) }
     }
 
-    @Synchronized
-    override fun reconcileEffect(
-        effectId: String,
-        decision: EffectReconciliationDecision
-    ): EffectReconciliationResult {
+    @Synchronized override fun reconcileEffect(effectId: String, decision: EffectReconciliationDecision): EffectReconciliationResult {
         val current = effects[effectId] ?: return EffectReconciliationResult.NOT_FOUND
         if (current.status != EffectStatus.UNKNOWN) return EffectReconciliationResult.NOT_UNKNOWN
         effects[effectId] = current.copy(status = decision.toStatus())
@@ -130,35 +122,22 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
     }
 
     override fun saveRun(run: Run) = synchronized(lock) { append(RunRecord.encode(run)) }
-
-    override fun loadRun(runId: String, catalog: ActionCatalog): Run? = synchronized(lock) {
-        replay().runs[runId]?.toRun(catalog)
-    }
+    override fun loadRun(runId: String, catalog: ActionCatalog): Run? = synchronized(lock) { replay().runs[runId]?.toRun(catalog) }
 
     override fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation = synchronized(lock) {
         if (invocations.map { it.effectId }.distinct().size != invocations.size) return@synchronized EffectReservation.CONFLICT
         val state = replay()
         val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
-        if (incoming.any { e -> state.effects[e.effectId]?.let { !it.compatibleWith(e) } == true }) {
-            return@synchronized EffectReservation.CONFLICT
-        }
+        if (incoming.any { e -> state.effects[e.effectId]?.let { !it.compatibleWith(e) } == true }) return@synchronized EffectReservation.CONFLICT
         if (incoming.any { state.effects.containsKey(it.effectId) }) return@synchronized EffectReservation.REPLAY_BLOCKED
         incoming.forEach { append(it.encode()) }
         EffectReservation.RESERVED
     }
 
-    override fun completeEffect(effectId: String) = synchronized(lock) {
-        append("X|${Codec.encode(effectId)}|COMPLETED")
-    }
+    override fun completeEffect(effectId: String) = synchronized(lock) { append("X|${Codec.encode(effectId)}|COMPLETED") }
+    override fun markEffectUnknown(effectId: String) = synchronized(lock) { append("X|${Codec.encode(effectId)}|UNKNOWN") }
 
-    override fun markEffectUnknown(effectId: String) = synchronized(lock) {
-        append("X|${Codec.encode(effectId)}|UNKNOWN")
-    }
-
-    override fun reconcileEffect(
-        effectId: String,
-        decision: EffectReconciliationDecision
-    ): EffectReconciliationResult = synchronized(lock) {
+    override fun reconcileEffect(effectId: String, decision: EffectReconciliationDecision): EffectReconciliationResult = synchronized(lock) {
         val current = replay().effects[effectId] ?: return@synchronized EffectReconciliationResult.NOT_FOUND
         if (current.status != EffectStatus.UNKNOWN) return@synchronized EffectReconciliationResult.NOT_UNKNOWN
         append("X|${Codec.encode(effectId)}|${decision.toStatus().name}")
@@ -170,13 +149,8 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
     }
 
     private fun append(record: String) {
-        val bytes = (record + "\n").toByteArray(StandardCharsets.UTF_8)
-        FileChannel.open(
-            file.toPath(),
-            java.nio.file.StandardOpenOption.WRITE,
-            java.nio.file.StandardOpenOption.APPEND
-        ).use { channel ->
-            channel.write(ByteBuffer.wrap(bytes))
+        FileChannel.open(file.toPath(), java.nio.file.StandardOpenOption.WRITE, java.nio.file.StandardOpenOption.APPEND).use { channel ->
+            channel.write(ByteBuffer.wrap((record + "\n").toByteArray(StandardCharsets.UTF_8)))
             channel.force(true)
         }
     }
@@ -193,19 +167,14 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
                 "X" -> if (parts.size == 3) {
                     val effectId = runCatching { Codec.decode(parts[1]) }.getOrNull()
                     val status = runCatching { EffectStatus.valueOf(parts[2]) }.getOrNull()
-                    if (effectId != null && status != null) {
-                        effects[effectId]?.let { effects[effectId] = it.copy(status = status) }
-                    }
+                    if (effectId != null && status != null) effects[effectId]?.let { effects[effectId] = it.copy(status = status) }
                 }
             }
         }
         return State(runs, effects)
     }
 
-    private data class State(
-        val runs: MutableMap<String, RunRecord>,
-        val effects: MutableMap<String, StoredEffect>
-    )
+    private data class State(val runs: MutableMap<String, RunRecord>, val effects: MutableMap<String, StoredEffect>)
 }
 
 private fun EffectReconciliationDecision.toStatus(): EffectStatus = when (this) {
@@ -223,59 +192,40 @@ private data class RunRecord(
     val input: Map<String, String>,
     val output: Map<String, String>,
     val denialReason: String?,
+    val approvalId: String?,
     val evidence: Evidence?
 ) {
     fun toRun(catalog: ActionCatalog): Run? = catalog.get(actionId)?.let { action ->
-        Run(
-            id = id,
-            activation = ActivationRequest(source, actionId, input, identity),
-            status = status,
-            action = action.copy(version = actionVersion),
-            output = output,
-            evidence = evidence,
-            denialReason = denialReason
-        )
+        Run(id, ActivationRequest(source, actionId, input, identity), status, action.copy(version = actionVersion), output, evidence, denialReason, approvalId)
     }
 
     companion object {
         fun encode(run: Run): String {
             val e = run.evidence
             return listOf(
-                "R", Codec.encode(run.id), run.activation.source.name, Codec.encode(run.activation.actionId),
-                run.action.version.toString(), Codec.encode(run.activation.identity), run.status.name,
-                Codec.encodeMap(run.activation.input), Codec.encodeMap(run.output), Codec.encodeNullable(run.denialReason),
+                "R", Codec.encode(run.id), run.activation.source.name, Codec.encode(run.activation.actionId), run.action.version.toString(),
+                Codec.encode(run.activation.identity), run.status.name, Codec.encodeMap(run.activation.input), Codec.encodeMap(run.output),
+                Codec.encodeNullable(run.denialReason), Codec.encodeNullable(run.approvalId),
                 if (e == null) "0" else "1", if (e == null) "" else Codec.encode(e.authorizedBy ?: ""),
                 if (e == null) "" else Codec.encodeInvocations(e.capabilityInvocations),
                 if (e == null) "" else Codec.encodeObservations(e.observations),
-                if (e == null) "" else e.verification.passed.toString(),
-                if (e == null) "" else Codec.encode(e.verification.reason)
+                if (e == null) "" else e.verification.passed.toString(), if (e == null) "" else Codec.encode(e.verification.reason)
             ).joinToString("|")
         }
 
         fun decode(parts: List<String>): RunRecord? {
-            if (parts.size != 16 || parts[0] != "R") return null
+            if (parts.size != 17 || parts[0] != "R") return null
             return runCatching {
-                val evidence = if (parts[10] == "1") Evidence(
-                    runId = Codec.decode(parts[1]),
-                    actionId = Codec.decode(parts[3]),
-                    actionVersion = parts[4].toInt(),
-                    activationSource = ActivationSource.valueOf(parts[2]),
-                    authorizedBy = Codec.decode(parts[11]).ifBlank { null },
-                    capabilityInvocations = Codec.decodeInvocations(parts[12]),
-                    observations = Codec.decodeObservations(parts[13]),
-                    verification = Verification(parts[14].toBooleanStrict(), Codec.decode(parts[15]))
+                val evidence = if (parts[11] == "1") Evidence(
+                    runId = Codec.decode(parts[1]), actionId = Codec.decode(parts[3]), actionVersion = parts[4].toInt(),
+                    activationSource = ActivationSource.valueOf(parts[2]), authorizedBy = Codec.decode(parts[12]).ifBlank { null },
+                    capabilityInvocations = Codec.decodeInvocations(parts[13]), observations = Codec.decodeObservations(parts[14]),
+                    verification = Verification(parts[15].toBooleanStrict(), Codec.decode(parts[16]))
                 ) else null
                 RunRecord(
-                    id = Codec.decode(parts[1]),
-                    source = ActivationSource.valueOf(parts[2]),
-                    actionId = Codec.decode(parts[3]),
-                    actionVersion = parts[4].toInt(),
-                    identity = Codec.decode(parts[5]),
-                    status = RunStatus.valueOf(parts[6]),
-                    input = Codec.decodeMap(parts[7]),
-                    output = Codec.decodeMap(parts[8]),
-                    denialReason = Codec.decodeNullable(parts[9]),
-                    evidence = evidence
+                    id = Codec.decode(parts[1]), source = ActivationSource.valueOf(parts[2]), actionId = Codec.decode(parts[3]), actionVersion = parts[4].toInt(),
+                    identity = Codec.decode(parts[5]), status = RunStatus.valueOf(parts[6]), input = Codec.decodeMap(parts[7]), output = Codec.decodeMap(parts[8]),
+                    denialReason = Codec.decodeNullable(parts[9]), approvalId = Codec.decodeNullable(parts[10]), evidence = evidence
                 )
             }.getOrNull()
         }
@@ -285,37 +235,27 @@ private data class RunRecord(
 private object Codec {
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
-
     fun encode(value: String): String = encoder.encodeToString(value.toByteArray(StandardCharsets.UTF_8))
     fun decode(value: String): String = if (value.isBlank()) "" else String(decoder.decode(value), StandardCharsets.UTF_8)
     fun encodeNullable(value: String?): String = value?.let { "1:${encode(it)}" } ?: "0"
     fun decodeNullable(value: String): String? = if (value == "0" || value.isBlank()) null else decode(value.removePrefix("1:"))
     fun encodeSet(value: Set<String>): String = value.toList().sorted().joinToString(",") { encode(it) }
     fun decodeSet(value: String): Set<String> = if (value.isBlank()) emptySet() else value.split(',').map(::decode).toSet()
-    fun encodeMap(value: Map<String, String>): String =
-        value.toSortedMap().entries.joinToString(",") { "${encode(it.key)}.${encode(it.value)}" }
+    fun encodeMap(value: Map<String, String>): String = value.toSortedMap().entries.joinToString(",") { "${encode(it.key)}.${encode(it.value)}" }
     fun decodeMap(value: String): Map<String, String> = if (value.isBlank()) emptyMap() else value.split(',').associate {
         val separator = it.indexOf('.')
         require(separator > 0)
         decode(it.substring(0, separator)) to decode(it.substring(separator + 1))
     }
     fun encodeInvocations(value: List<CapabilityInvocation>): String = value.joinToString("~") { i ->
-        listOf(
-            encode(i.id), encode(i.runId), encode(i.capabilityId), encode(i.actionId), i.actionVersion.toString(),
-            encode(i.effectId), encodeSet(i.scope), encode(i.attributedTo), encodeMap(i.parameters)
-        ).joinToString("^")
+        listOf(encode(i.id), encode(i.runId), encode(i.capabilityId), encode(i.actionId), i.actionVersion.toString(), encode(i.effectId), encodeSet(i.scope), encode(i.attributedTo), encodeMap(i.parameters)).joinToString("^")
     }
     fun decodeInvocations(value: String): List<CapabilityInvocation> = if (value.isBlank()) emptyList() else value.split('~').map { raw ->
         val p = raw.split('^')
         require(p.size == 9)
-        CapabilityInvocation(
-            id = decode(p[0]), runId = decode(p[1]), capabilityId = decode(p[2]), actionId = decode(p[3]),
-            actionVersion = p[4].toInt(), effectId = decode(p[5]), scope = decodeSet(p[6]),
-            attributedTo = decode(p[7]), parameters = decodeMap(p[8])
-        )
+        CapabilityInvocation(id = decode(p[0]), runId = decode(p[1]), capabilityId = decode(p[2]), actionId = decode(p[3]), actionVersion = p[4].toInt(), effectId = decode(p[5]), scope = decodeSet(p[6]), attributedTo = decode(p[7]), parameters = decodeMap(p[8]))
     }
-    fun encodeObservations(value: List<Observation>): String =
-        value.joinToString("~") { "${encode(it.key)}^${encode(it.value)}" }
+    fun encodeObservations(value: List<Observation>): String = value.joinToString("~") { "${encode(it.key)}^${encode(it.value)}" }
     fun decodeObservations(value: String): List<Observation> = if (value.isBlank()) emptyList() else value.split('~').map {
         val p = it.split('^')
         require(p.size == 2)
