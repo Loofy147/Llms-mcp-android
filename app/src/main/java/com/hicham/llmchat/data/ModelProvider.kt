@@ -2,21 +2,19 @@ package com.hicham.llmchat.data
 
 import android.content.Context
 import com.hicham.llmchat.model.ChatMessage
-import com.hicham.llmchat.runtime.AndroidRuntimeFactory
+import com.hicham.llmchat.runtime.AgentRuntime
 
-/** Provider-neutral reasoning boundary used by the UI/runtime. */
+/** Provider-neutral reasoning boundary used by the application facade. */
 interface ModelProvider {
     fun runConversation(initialHistory: List<ChatMessage>, listener: ConversationListener)
 }
 
-/**
- * Current vendor adapter. Anthropic remains a transport/provider boundary;
- * local effects are delegated to the application's canonical runtime.
- */
-class AnthropicModelProvider(context: Context) : ModelProvider {
-    private val appContext = context.applicationContext
-    private val settingsStore = SettingsStore(appContext)
-    private val runtime = AndroidRuntimeFactory.create(appContext)
+/** Vendor adapter: transport and streaming only; local effects use the canonical runtime. */
+class AnthropicModelProvider(
+    context: Context,
+    runtime: AgentRuntime
+) : ModelProvider {
+    private val settingsStore = SettingsStore(context.applicationContext)
     private val toolGateway = RuntimeToolGateway(runtime)
 
     override fun runConversation(initialHistory: List<ChatMessage>, listener: ConversationListener) {
