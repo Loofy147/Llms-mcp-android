@@ -18,6 +18,7 @@ class AnthropicModelProvider(
 ) : ModelProvider {
     private val settingsStore = SettingsStore(context.applicationContext)
     private val toolGateway = RuntimeToolGateway(runtime)
+    private val egressPolicy = egressPolicy
 
     override fun runConversation(initialHistory: List<ChatMessage>, listener: ConversationListener) {
         AnthropicClient(settingsStore.load(), toolGateway, egressPolicy).runConversation(initialHistory, listener)
