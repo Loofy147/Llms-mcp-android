@@ -42,14 +42,15 @@ class AgentRuntime(
                 else -> run.copy(status = RunStatus.FAILED, denialReason = "Approval could not be consumed").also(store::saveRun)
             }
         }
-        if (policy.evaluate(run.activation, action) == PolicyDecision.DENY) {
-            return run.copy(status = RunStatus.DENIED, denialReason = "Policy denied Action after approval").also(store::saveRun)
-        }
-        return when (approvalStore.consume(approvalId, runId, context.requesterIdentity, context.fingerprint, decision, approverIdentity)) {
-            ApprovalConsumption.CONSUMED -> execute(run.activation, action, currentPlan, run)
-            ApprovalConsumption.NOT_PENDING -> run.copy(status = RunStatus.FAILED, denialReason = "Approval already consumed").also(store::saveRun)
-            ApprovalConsumption.CONFLICT -> run.copy(status = RunStatus.FAILED, denialReason = "Approval context conflict").also(store::saveRun)
-            ApprovalConsumption.NOT_FOUND -> run.copy(status = RunStatus.FAILED, denialReason = "Approval context not found").also(store::saveRun)
+        return when (policy.evaluate(run.activation, action)) {
+            PolicyDecision.ALLOW -> when (approvalStore.consume(approvalId, runId, context.requesterIdentity, context.fingerprint, decision, approverIdentity)) {
+                ApprovalConsumption.CONSUMED -> execute(run.activation, action, currentPlan, run)
+                ApprovalConsumption.NOT_PENDING -> run.copy(status = RunStatus.FAILED, denialReason = "Approval already consumed").also(store::saveRun)
+                ApprovalConsumption.CONFLICT -> run.copy(status = RunStatus.FAILED, denialReason = "Approval context conflict").also(store::saveRun)
+                ApprovalConsumption.NOT_FOUND -> run.copy(status = RunStatus.FAILED, denialReason = "Approval context not found").also(store::saveRun)
+            }
+            PolicyDecision.DENY -> run.copy(status = RunStatus.DENIED, denialReason = "Policy denied Action after approval").also(store::saveRun)
+            PolicyDecision.APPROVAL_REQUIRED -> run.copy(status = RunStatus.FAILED, denialReason = "Policy still requires approval after approval").also(store::saveRun)
         }
     }
 
