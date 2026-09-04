@@ -39,6 +39,10 @@ class SettingsStore(context: Context) {
     }
 
     fun save(settings: AppSettings) {
+        val previousServerNames = storedServerNames()
+        val currentServerNames = settings.mcpServers.map { it.name.trim() }.filter { it.isNotBlank() }.toSet()
+        (previousServerNames - currentServerNames).forEach(credentials::deleteMcpToken)
+
         val arr = JSONArray()
         for (server in settings.mcpServers) {
             arr.put(JSONObject().apply {
@@ -61,6 +65,15 @@ class SettingsStore(context: Context) {
     fun deleteMcpServerCredential(serverName: String) {
         credentials.deleteMcpToken(serverName)
     }
+
+    private fun storedServerNames(): Set<String> = runCatching {
+        val arr = JSONArray(prefs.getString(KEY_MCP_SERVERS, "[]") ?: "[]")
+        buildSet {
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.optString("name")?.trim()?.takeIf(String::isNotBlank)?.let(::add)
+            }
+        }
+    }.getOrDefault(emptySet())
 
     private fun migrateLegacyCredentials() {
         val legacyApiKey = prefs.getString(KEY_API_KEY, null)
