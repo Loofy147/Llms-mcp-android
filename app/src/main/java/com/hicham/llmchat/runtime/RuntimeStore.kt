@@ -15,6 +15,8 @@ interface RuntimeStore {
     fun markEffectUnknown(effectId: String)
     fun reconcileEffect(effectId: String, decision: EffectReconciliationDecision): EffectReconciliationResult
     fun unknownEffects(): List<EffectRecord>
+    /** Convert effects that were reserved before an interrupted process into explicitly reconcilable UNKNOWN state. */
+    fun recoverInterruptedEffects(): Int
 }
 
 enum class EffectReservation { RESERVED, REPLAY_BLOCKED, CONFLICT }
@@ -60,7 +62,7 @@ class InMemoryRuntimeStore : RuntimeStore {
         if (invocations.map { it.effectId }.distinct().size != invocations.size) return EffectReservation.CONFLICT
         val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
         if (incoming.any { e -> effects[e.effectId]?.let { !it.compatibleWith(e) } == true }) return EffectReservation.CONFLICT
-        if (incoming.any { effects.containsKey(it.effectId) }) return EffectReservation.REPLAY_BLOCKED
+        if (incoming.any { effects[it.effectId]?.status != EffectStatus.CONFIRMED_NOT_EXECUTED && effects.containsKey(it.effectId) }) return EffectReservation.REPLAY_BLOCKED
         incoming.forEach { effects[it.effectId] = it }
         return EffectReservation.RESERVED
     }
@@ -73,6 +75,11 @@ class InMemoryRuntimeStore : RuntimeStore {
         return EffectReconciliationResult.RECONCILED
     }
     @Synchronized override fun unknownEffects(): List<EffectRecord> = effects.values.filter { it.status == EffectStatus.UNKNOWN }.map { it.record() }
+    @Synchronized override fun recoverInterruptedEffects(): Int {
+        val reserved = effects.values.filter { it.status == EffectStatus.RESERVED }
+        reserved.forEach { effect -> effects[effect.effectId] = effect.copy(status = EffectStatus.UNKNOWN) }
+        return reserved.size
+    }
 }
 
 /** Append-only journal; malformed/torn final records are ignored during replay. */
@@ -85,7 +92,7 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
         if (invocations.map { it.effectId }.distinct().size != invocations.size) return@synchronized EffectReservation.CONFLICT
         val state = replay(); val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
         if (incoming.any { e -> state.effects[e.effectId]?.let { !it.compatibleWith(e) } == true }) return@synchronized EffectReservation.CONFLICT
-        if (incoming.any { state.effects.containsKey(it.effectId) }) return@synchronized EffectReservation.REPLAY_BLOCKED
+        if (incoming.any { state.effects[it.effectId]?.status != EffectStatus.CONFIRMED_NOT_EXECUTED && state.effects.containsKey(it.effectId) }) return@synchronized EffectReservation.REPLAY_BLOCKED
         incoming.forEach { append(it.encode()) }; EffectReservation.RESERVED
     }
     override fun completeEffect(effectId: String) = synchronized(lock) { append("X|${Codec.encode(effectId)}|COMPLETED") }
@@ -96,6 +103,11 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
         append("X|${Codec.encode(effectId)}|${decision.toStatus().name}"); EffectReconciliationResult.RECONCILED
     }
     override fun unknownEffects(): List<EffectRecord> = synchronized(lock) { replay().effects.values.filter { it.status == EffectStatus.UNKNOWN }.map { it.record() } }
+    override fun recoverInterruptedEffects(): Int = synchronized(lock) {
+        val reserved = replay().effects.values.filter { it.status == EffectStatus.RESERVED }
+        reserved.forEach { append("X|${Codec.encode(it.effectId)}|UNKNOWN") }
+        reserved.size
+    }
     private fun append(record: String) {
         FileChannel.open(file.toPath(), java.nio.file.StandardOpenOption.WRITE, java.nio.file.StandardOpenOption.APPEND).use { channel ->
             channel.write(ByteBuffer.wrap((record + "\n").toByteArray(StandardCharsets.UTF_8))); channel.force(true)
