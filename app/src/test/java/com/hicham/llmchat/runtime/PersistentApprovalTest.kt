@@ -45,7 +45,9 @@ class PersistentApprovalTest {
         assertEquals(pending.id, approved.id)
         assertEquals(1, executions.size)
         assertEquals(pending.id, executions.single())
-        assertEquals(RunStatus.FAILED, replay.status)
+        // A terminal Run is immutable; a replay attempt must not execute again or mutate the Run.
+        assertEquals(RunStatus.SUCCEEDED, replay.status)
+        assertEquals(approved.id, replay.id)
     }
 
     @Test
