@@ -15,9 +15,7 @@ object NativeActions {
         id = CURRENT_TIME,
         version = 1,
         purpose = "Read the current local date and time from the device.",
-        capabilities = listOf(
-            CapabilityDescriptor("device.time.read", EffectClass.READ_ONLY)
-        ),
+        capabilities = listOf(CapabilityDescriptor("device.time.read", EffectClass.READ_ONLY)),
         reduce = { _, results ->
             val result = results.single()
             ActionExecution(output = result.output, observations = result.observations)
@@ -29,9 +27,7 @@ object NativeActions {
         id = CALCULATE,
         version = 1,
         purpose = "Evaluate a bounded arithmetic expression without executing arbitrary code.",
-        capabilities = listOf(
-            CapabilityDescriptor("device.calculator.evaluate", EffectClass.READ_ONLY)
-        ),
+        capabilities = listOf(CapabilityDescriptor("device.calculator.evaluate", EffectClass.READ_ONLY)),
         reduce = { input, results ->
             val result = results.single()
             ActionExecution(
@@ -53,25 +49,30 @@ object NativeActions {
 
     fun timeNow(): CapabilityExecution {
         val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss (zzz)", Locale.getDefault())
+        val now = Date()
+        val value = fmt.format(now)
         return CapabilityExecution(
-            output = mapOf("value" to fmt.format(Date())),
-            observations = listOf(Observation("local_time", fmt.format(Date())))
+            output = mapOf("value" to value),
+            observations = listOf(Observation("local_time", value))
         )
     }
 }
 
 /**
- * No scripting/eval facility is used. Only digits, decimal points, arithmetic operators,
- * parentheses, unary minus, and spaces are accepted.
+ * No scripting/eval facility is used. Input is bounded because it is model-controlled.
  */
 object SafeArithmetic {
+    private const val MAX_EXPRESSION_LENGTH = 256
+
     fun evaluate(expr: String): Double {
+        require(expr.length <= MAX_EXPRESSION_LENGTH) { "Expression is too long" }
         if (!expr.all { it.isDigit() || it in "+-*/(). " }) {
             throw IllegalArgumentException("Expression contains unsupported characters")
         }
         val parser = Parser(expr)
         val result = parser.parseExpression()
         parser.expectEnd()
+        require(result.isFinite()) { "Expression produced a non-finite result" }
         return result
     }
 
