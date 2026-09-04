@@ -6,7 +6,9 @@ import com.hicham.llmchat.data.ConversationListener
 import com.hicham.llmchat.model.ChatMessage
 import com.hicham.llmchat.runtime.ActivationRequest
 import com.hicham.llmchat.runtime.AgentRuntime
+import com.hicham.llmchat.runtime.AllowlistEgressPolicy
 import com.hicham.llmchat.runtime.AndroidRuntimeFactory
+import com.hicham.llmchat.runtime.EgressPolicy
 import com.hicham.llmchat.runtime.Run
 
 /**
@@ -16,7 +18,8 @@ import com.hicham.llmchat.runtime.Run
 class AssistantRuntime(context: Context) {
     private val appContext = context.applicationContext
     private val agentRuntime: AgentRuntime = AndroidRuntimeFactory.create(appContext)
-    private val modelProvider = AnthropicModelProvider(appContext, agentRuntime)
+    private val egressPolicy: EgressPolicy = AllowlistEgressPolicy(setOf("api.anthropic.com"))
+    private val modelProvider = AnthropicModelProvider(appContext, agentRuntime, egressPolicy)
 
     fun runConversation(initialHistory: List<ChatMessage>, listener: ConversationListener) {
         modelProvider.runConversation(initialHistory, listener)
