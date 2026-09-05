@@ -25,10 +25,16 @@ fun interface EgressPolicy {
 }
 
 /**
- * Minimal local egress boundary for the current provider architecture.
- * Only HTTPS destinations on the explicit allowlist are accepted.
+ * Local egress boundary for the provider architecture.
+ * Destination and data-class admission are independently enforced.
+ * Content minimization/redaction remains a separate layer.
  */
-class AllowlistEgressPolicy(private val allowedHosts: Set<String>) : EgressPolicy {
+class AllowlistEgressPolicy(
+    private val allowedHosts: Set<String>,
+    private val allowedDataClasses: Set<EgressDataClass> = EgressDataClass.entries.toSet()
+) : EgressPolicy {
+    private val normalizedHosts = allowedHosts.map(String::lowercase).toSet()
+
     override fun decide(request: EgressRequest): EgressDecision {
         val uri = runCatching { URI(request.destination) }.getOrNull()
             ?: return EgressDecision.DENY("Invalid egress destination")
@@ -44,8 +50,15 @@ class AllowlistEgressPolicy(private val allowedHosts: Set<String>) : EgressPolic
             return EgressDecision.DENY("Egress destination must not embed credentials")
         }
 
-        if (host !in allowedHosts.map(String::lowercase).toSet()) {
+        if (host !in normalizedHosts) {
             return EgressDecision.DENY("Destination host is not allowed: $host")
+        }
+
+        val disallowedDataClasses = request.dataClasses - allowedDataClasses
+        if (disallowedDataClasses.isNotEmpty()) {
+            return EgressDecision.DENY(
+                "Egress data classes are not allowed: ${disallowedDataClasses.toList().sortedBy { it.name }}"
+            )
         }
 
         return EgressDecision.ALLOW
