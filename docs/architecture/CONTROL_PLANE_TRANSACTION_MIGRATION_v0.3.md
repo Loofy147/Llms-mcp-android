@@ -1,6 +1,6 @@
 # Control-Plane Transaction Migration v0.3
 
-Status: Implementation preparation baseline
+Status: Implementation preparation baseline — reviewed, not approved
 Date: 2026-09-06
 
 ## 1. Goal
@@ -28,36 +28,73 @@ Target interface:
 ```kotlin
 interface ControlPlaneStore {
     fun createApproval(request: ActivationRequest, action: ActionDefinition, plan: ActionPlan): ApprovalAdmission
-    fun resolveApproved(
-        runId: String,
-        approvalId: String,
-        requesterIdentity: String,
-        approverIdentity: String,
-        fingerprint: String
-    ): ExecutionAdmission
+    fun resolveApproved(...): ExecutionAdmission
     fun resolveDenied(...): ResolutionResult
     fun commitTerminal(run: Run, effects: List<CapabilityInvocation>): CommitResult
     fun recover(): RecoveryReport
 }
 ```
 
-The exact Kotlin signatures may change. The important property is that callers no longer coordinate ApprovalStore and RuntimeStore independently for the approval-to-execution boundary.
+The exact Kotlin signatures may change. The important semantic property is that callers no longer coordinate ApprovalStore and RuntimeStore independently for the approval-to-execution boundary.
+
+A facade/coordinator by itself is **not** a transaction. It only becomes a durable transaction boundary when its underlying persistence primitive can commit the required state atomically or provides an equivalently proven CAS/commit protocol.
 
 ## 4. Two-stage migration
 
-### Stage A — semantic facade
+### Stage A — semantic coordination
 
-Keep existing journal storage but add one coordinator that owns the ordering and single-winner decision in one object.
+Keep existing journal storage and introduce one coordinator that owns the ordering, validation, and recovery protocol.
 
-This stage proves runtime semantics and testability without requiring an immediate storage rewrite.
+Stage A proves:
+
+```text
+one orchestration authority
+explicit state transitions
+failure classification
+protocol-level tests
+```
+
+Stage A does **not** prove:
+
+```text
+cross-file atomicity
+crash atomicity
+cross-process CAS
+```
+
+Those remain provisional until Stage B.
 
 ### Stage B — durable transaction backend
 
-Replace the coordinator's implementation with a storage primitive that provides atomic compare-and-set or equivalent transactional behavior across Run, approval, and effect records.
+Replace or consolidate the persistence implementation with a storage primitive that provides atomic compare-and-set or equivalent transactional behavior across Run, approval, execution claim, and effect-group reservation.
 
-SQLite is the leading candidate for Android, but it is an implementation choice rather than a semantic requirement.
+SQLite is a leading Android candidate because the required properties map naturally to transactional storage, but it remains an implementation choice rather than part of the semantic contract.
 
-## 5. Required journal versioning
+## 5. Durable state vocabulary
+
+Approval lifecycle should distinguish the authorization decision from execution binding. An equivalent model may use events rather than enum values:
+
+```text
+PENDING
+APPROVED_UNBOUND
+APPROVED_BOUND
+DENIED
+```
+
+Execution admission has a separate identity:
+
+```text
+executionClaimId
+runId
+approvalId
+ownerId
+claimedAt
+status
+```
+
+The identities must not be conflated.
+
+## 6. Required journal versioning
 
 Add a record/version discriminator before introducing new transaction events.
 
@@ -70,11 +107,23 @@ v2 transaction events
 
 Replay must reject malformed records safely and ignore unsupported future record versions without fabricating valid state.
 
-## 6. Compatibility rules
+Fault tests must distinguish:
+
+```text
+prepared
+committed
+visible after reopen
+```
+
+An exception does not by itself prove that a durable write did not occur.
+
+## 7. Compatibility rules
 
 ### Approval
 
 Old `PENDING` approvals remain resolvable only through the new coordinator after their context is revalidated.
+
+A durable approval decision without execution binding remains recoverable rather than being treated as completed execution.
 
 ### Effects
 
@@ -84,45 +133,88 @@ Existing `RESERVED`, `COMPLETED`, `UNKNOWN`, and `CONFIRMED_NOT_EXECUTED` record
 
 Existing terminal Runs remain terminal. Migration must never reopen them merely because related approval/effect records are incomplete.
 
-## 7. Execution claim
+## 8. Execution claim and recovery
 
-Do not add a public `SUCCEEDED`/`RUNNING` shortcut for an approval decision.
+A claim is an execution ownership record, not proof that replay is safe.
 
-The new internal execution claim must have a unique identity, for example:
+Recovery must classify according to:
 
 ```text
-executionClaimId
-runId
-approvalId
-claimedAt
-ownerId
-status
+claim state
+reservation state
+effect idempotency semantics
+effect class
+external uncertainty
 ```
 
-A second resolver must be unable to acquire the same claim.
+Required recovery dispositions:
 
-## 8. Effect group identity
+```text
+WAITING_APPROVAL
+SAFE_TO_START
+SAFE_TO_RESUME
+EFFECTS_UNKNOWN
+TERMINAL
+MANUAL_RECONCILIATION_REQUIRED
+```
 
-For a multi-invocation plan, introduce a deterministic group identity:
+`SAFE_TO_START` is allowed only when no committed effect exists or the effect's replay semantics explicitly permit another execution admission.
+
+`SAFE_TO_RESUME` means the existing execution owner can continue without re-admitting already-reserved effects.
+
+An interrupted effect with uncertain external completion must remain `UNKNOWN` until reconciled.
+
+## 9. Effect group identity
+
+For a multi-invocation plan, introduce a deterministic group identity for the particular execution attempt:
 
 ```text
 reservationGroupId = hash(runId + canonical planned invocation set)
 ```
 
-The group identity is control-plane metadata. Individual effect IDs remain the stable replay keys used for external idempotency where applicable.
+The group identity is control-plane metadata. Individual `effectId` values remain the stable replay identities.
 
-## 9. Failure semantics during migration
+Atomic group reservation means:
+
+```text
+all intended effects reserved
+```
+
+or:
+
+```text
+no committed reservation group
+```
+
+It does not imply atomic external execution.
+
+## 10. Terminal transition enforcement
+
+Terminality must be enforced in the durable write path.
+
+Forbidden examples include:
+
+```text
+SUCCEEDED -> RUNNING
+FAILED -> WAITING_APPROVAL
+CANCELLED -> SUCCEEDED
+```
+
+The persistence operation should return an explicit transition result rather than silently accepting stale writes.
+
+## 11. Failure semantics during migration
 
 Until Stage B exists:
 
 ```text
 semantic transaction protocol = REQUIRED
 physical atomicity             = PROVISIONAL
+cross-process correctness      = OPEN
 ```
 
 No documentation may describe Stage A as crash-atomic across separate journal files.
 
-## 10. Test-first order
+## 12. Test-first order
 
 Implement tests in this order:
 
@@ -133,19 +225,21 @@ Implement tests in this order:
 5. recovery classification;
 6. injected crash boundaries;
 7. malformed/torn journal handling;
-8. repeated recovery idempotence.
+8. repeated recovery idempotence;
+9. separate-instance and process-visible concurrency.
 
-Only after these tests exist should the storage implementation be changed.
+Every recovery test must reopen durable state and assert both local result and reconstructed state.
 
-## 11. Exit criteria
+## 13. Exit criteria
 
-Stage A is complete when all protocol tests are deterministic and the runtime has one coordination authority.
+Stage A is complete when all protocol tests are deterministic and the runtime has one coordination authority, while atomicity claims remain explicitly provisional.
 
-Stage B is complete when the durable backend demonstrates:
+Stage B is complete only when the durable backend demonstrates:
 
 ```text
 CAS/transaction semantics
 cross-instance correctness
+cross-process behavior where applicable
 crash recovery
 atomic group reservation
 terminal immutability
