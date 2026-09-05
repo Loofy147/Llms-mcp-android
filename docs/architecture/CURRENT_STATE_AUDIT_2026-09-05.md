@@ -11,6 +11,8 @@ The application has crossed an important architectural boundary: local native to
 
 The merged state is **not production-complete**. The strongest current evidence is deterministic JVM/CI proof of the control-plane primitives plus a successful merged-source Android debug build. The remaining gaps are primarily integration, external-effect, privacy-data handling, lifecycle, and product-surface gaps rather than a second competing execution architecture.
 
+A second architectural principle is now established for capability selection: **prefer capabilities whose outputs are observable and independently verifiable**. This does not mean only deterministic work is useful; it means verifiability is a first-class factor in deciding what to automate first.
+
 ## 2. Canonical control path
 
 ```text
@@ -118,11 +120,32 @@ This egress control is an application->Anthropic boundary. It does **not** mean 
 - Credentials are stored through Android Keystore-backed encrypted storage, with legacy API-key migration support.
 - MCP credential cleanup is part of the settings persistence path.
 
+### Verification-first capability direction
+
+The first proposed personal-developer capability family is deliberately read-heavy and verification-heavy:
+
+```text
+dev.workspace.inspect
+dev.file.read
+dev.file.hash
+dev.directory.list
+dev.git.status
+dev.git.diff
+dev.git.log
+dev.test.run
+dev.build.run
+dev.artifact.inspect
+dev.config.validate
+```
+
+These candidates are preferred because repository state, diffs, test reports, build results, artifacts, hashes, and configuration checks expose objective observations that can be verified without trusting model prose. The complete research proposal, capability tiers, composite Actions, and benchmark dimensions are documented in `PERSONAL_DEVELOPER_CAPABILITY_RESEARCH_2026-09-05.md`.
+
 ### CI evidence
 
 - Merged commit `0fccaea041c9dc39a1183f44418897e43433f73a` completed workflow run `147` with conclusion `success`.
 - The workflow runs JVM unit tests, builds the debug APK, and uploads the APK artifact.
-- The successful CI result is source/build evidence, not real-device or production evidence.
+- Subsequent documentation-only CI run `155` also completed successfully.
+- CI results are source/build evidence, not real-device or production evidence.
 
 ## 5. Open gates
 
@@ -188,18 +211,23 @@ The current repository must not be described as having:
 - tamper-evident audit logging;
 - broad Android-native automation integration;
 - production profile/policy management;
-- unrestricted autonomous background execution.
+- unrestricted autonomous background execution;
+- a general-purpose coding agent;
+- evidence that developer capabilities are broadly autonomous merely because their outputs are verifiable.
 
 ## 7. Recommended next sequence
 
-1. Android approval UI + process-death integration test.
-2. Capability-specific reconciliation proof against one real external effect.
-3. Egress minimization/redaction and an explicit provider-side MCP trust/egress decision.
-4. Native internal MCP adapter if local authorization over MCP effects is required.
-5. First real Android/device CapabilityExecutor adapter.
-6. Evidence/audit hardening and backup/export/log review.
-7. Only then expand activation surfaces, profiles, background work, and higher-level Actions.
+1. Formalize the Capability/Verification contract and implement the first read-only personal developer capability family.
+2. Build a 20-case benchmark across at least three repository/project states, measuring verification precision/recall, false-success rate, latency, and human intervention.
+3. Add one write capability only after deterministic verification is proven.
+4. Android approval UI + process-death integration test.
+5. Capability-specific reconciliation proof against one real external effect.
+6. Egress minimization/redaction and an explicit provider-side MCP trust/egress decision.
+7. Native internal MCP adapter if local authorization over MCP effects is required.
+8. First real Android/device CapabilityExecutor adapter.
+9. Evidence/audit hardening and backup/export/log review.
+10. Only then expand activation surfaces, profiles, background work, and higher-level Actions.
 
 ## 8. Review conclusion
 
-The merged architecture is internally coherent enough to continue implementation without reopening the core semantic model. The remaining work should be treated as evidence-producing integration gates. New features must reuse the existing `Activation -> Action -> Policy/Approval/Egress -> Run -> CapabilityExecutor -> Observation/Verification/Evidence` path rather than creating another authority path.
+The merged architecture is internally coherent enough to continue implementation without reopening the core semantic model. The highest-value next step is not more agentic breadth; it is proving that a small, verification-rich capability family can produce reliable developer utility through the existing control plane. New features must reuse the existing `Activation -> Action -> Policy/Approval/Egress -> Run -> CapabilityExecutor -> Observation/Verification/Evidence` path rather than creating another authority path.
