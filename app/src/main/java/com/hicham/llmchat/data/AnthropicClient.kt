@@ -4,6 +4,10 @@ import com.hicham.llmchat.model.AppSettings
 import com.hicham.llmchat.model.ChatMessage
 import com.hicham.llmchat.model.ContentBlock
 import com.hicham.llmchat.model.toJson
+import com.hicham.llmchat.runtime.EgressDataClass
+import com.hicham.llmchat.runtime.EgressDecision
+import com.hicham.llmchat.runtime.EgressPolicy
+import com.hicham.llmchat.runtime.EgressRequest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,20 +25,16 @@ interface ConversationListener {
 }
 
 /**
- * Talks to the Anthropic Messages API directly — no server in between.
- * Owns the whole conversation loop: streams a reply, and if the model calls
- * a *client-side* tool, executes it locally and sends the result back
- * automatically. MCP tool calls need no extra round trip here: the API
- * resolves those server-side against whatever MCP servers are configured in
- * [settings], and hands back already-completed mcp_tool_use / mcp_tool_result
- * blocks within the same response.
- *
- * Schema verified against https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
- * on 2026-08-30 (current beta header: mcp-client-2025-11-20; the older
- * mcp-client-2025-04-04 + inline tool_configuration form is deprecated).
+ * Vendor transport adapter. It owns HTTP/stream parsing, but local effectful tool execution
+ * is delegated to RuntimeToolGateway so the application keeps one execution authority.
+ * Every remote request also crosses the local egress policy boundary.
+ * MCP connector transport remains provider-owned for now.
  */
-class AnthropicClient(private val settings: AppSettings) {
-
+class AnthropicClient(
+    private val settings: AppSettings,
+    private val runtimeToolGateway: RuntimeToolGateway,
+    private val egressPolicy: EgressPolicy
+) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
@@ -56,9 +56,9 @@ class AnthropicClient(private val settings: AppSettings) {
                 val resultBlocks = mutableListOf<ContentBlock>()
                 for (block in history.last().blocks) {
                     if (block is ContentBlock.ToolUse) {
-                        val result = ToolRegistry.execute(block.name, block.inputJson)
+                        val result = runtimeToolGateway.execute(block.name, block.inputJson)
                         listener.onToolCall(block.name, result)
-                        resultBlocks.add(ContentBlock.ToolResult(block.id, result))
+                        resultBlocks.add(ContentBlock.ToolResult(block.id, result, result.startsWith("Error:")))
                     }
                 }
                 if (resultBlocks.isEmpty()) {
@@ -67,7 +67,6 @@ class AnthropicClient(private val settings: AppSettings) {
                 }
                 history.add(ChatMessage("user", resultBlocks))
                 listener.onUpdate(history)
-                // loop: send again with the tool result appended
             }
         } catch (e: Exception) {
             listener.onError(e.message ?: "Unknown error")
@@ -85,9 +84,6 @@ class AnthropicClient(private val settings: AppSettings) {
         for (m in historyExcludingInProgress) messages.put(m.toJson())
         body.put("messages", messages)
 
-        // tools array: our own client-side tool defs, plus one mcp_toolset entry
-        // per configured MCP server (required — every server in mcp_servers must
-        // be referenced by exactly one MCPToolset).
         val tools = JSONArray()
         if (settings.nativeToolsEnabled) {
             for (t in ToolRegistry.toolDefinitions()) tools.put(t)
@@ -117,15 +113,35 @@ class AnthropicClient(private val settings: AppSettings) {
         val target = history.last()
         val bodyJson = buildRequestBody(history.dropLast(1))
 
+        when (val decision = egressPolicy.decide(
+            EgressRequest(
+                destination = ANTHROPIC_URL,
+                purpose = "Remote model inference and MCP connector request",
+                dataClasses = buildSet {
+                    add(EgressDataClass.USER_CONTENT)
+                    add(EgressDataClass.USER_CONFIGURATION)
+                    add(EgressDataClass.CREDENTIAL)
+                }
+            )
+        )) {
+            EgressDecision.ALLOW -> Unit
+            is EgressDecision.DENY -> {
+                listener.onError("Egress denied: ${decision.reason}")
+                return null
+            }
+        }
+
         val reqBuilder = Request.Builder()
-            .url("https://api.anthropic.com/v1/messages")
+            .url(ANTHROPIC_URL)
             .header("x-api-key", settings.apiKey)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
         if (settings.mcpServers.isNotEmpty()) {
             reqBuilder.header("anthropic-beta", "mcp-client-2025-11-20")
         }
-        val request = reqBuilder.post(bodyJson.toString().toRequestBody("application/json".toMediaType())).build()
+        val request = reqBuilder
+            .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
+            .build()
 
         var stopReason: String? = null
         http.newCall(request).execute().use { response ->
@@ -133,10 +149,8 @@ class AnthropicClient(private val settings: AppSettings) {
                 listener.onError(parseErrorMessage(response.body?.string().orEmpty(), response.code))
                 return null
             }
-            var eventName: String? = null
             response.body!!.charStream().buffered().forEachLine { raw ->
                 when {
-                    raw.startsWith("event: ") -> eventName = raw.removePrefix("event: ").trim()
                     raw.startsWith("data: ") -> {
                         val obj = runCatching { JSONObject(raw.removePrefix("data: ").trim()) }.getOrNull()
                         if (obj != null) {
@@ -188,7 +202,7 @@ class AnthropicClient(private val settings: AppSettings) {
                         when (val b = target.blocks.getOrNull(index)) {
                             is ContentBlock.ToolUse -> b.inputJson += partial
                             is ContentBlock.McpToolUse -> b.inputJson += partial
-                            else -> {}
+                            else -> Unit
                         }
                     }
                 }
@@ -202,7 +216,11 @@ class AnthropicClient(private val settings: AppSettings) {
 
     private fun parseErrorMessage(body: String, httpCode: Int): String = try {
         JSONObject(body).getJSONObject("error").getString("message")
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         "HTTP $httpCode: $body"
+    }
+
+    companion object {
+        private const val ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
     }
 }

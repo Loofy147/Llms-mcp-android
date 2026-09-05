@@ -48,9 +48,6 @@ data class CapabilityExecution(
     val postcondition: Boolean = true
 )
 
-/**
- * Action evaluation is deliberately effect-free. Capability side effects belong to CapabilityExecutor.
- */
 data class ActionDefinition(
     val id: String,
     val version: Int,
@@ -88,5 +85,6 @@ data class Run(
     val action: ActionDefinition,
     val output: Map<String, String> = emptyMap(),
     val evidence: Evidence? = null,
-    val denialReason: String? = null
+    val denialReason: String? = null,
+    val approvalId: String? = null
 )

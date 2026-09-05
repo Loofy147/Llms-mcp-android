@@ -40,7 +40,7 @@ class UnknownEffectReconciliationTest {
     }
 
     @Test
-    fun confirmedNotExecutedRemainsBlockedFromReplay() {
+    fun confirmedNotExecutedAllowsControlledRetry() {
         val store = InMemoryRuntimeStore()
         val effect = invocation()
 
@@ -51,7 +51,7 @@ class UnknownEffectReconciliationTest {
             store.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
         )
 
-        assertEquals(EffectReservation.REPLAY_BLOCKED, store.reserveEffects(listOf(effect)))
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
         assertTrue(store.unknownEffects().isEmpty())
     }
 

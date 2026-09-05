@@ -3,8 +3,8 @@ package com.hicham.llmchat.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hicham.llmchat.AssistantRuntime
 import com.hicham.llmchat.data.ConversationListener
-import com.hicham.llmchat.data.ModelProvider
 import com.hicham.llmchat.data.SettingsStore
 import com.hicham.llmchat.model.AppSettings
 import com.hicham.llmchat.model.ChatMessage
@@ -24,7 +24,7 @@ data class ChatUiState(
 
 class ChatViewModel(
     application: Application,
-    private val modelProvider: ModelProvider
+    private val assistantRuntime: AssistantRuntime
 ) : AndroidViewModel(application) {
     private val settingsStore = SettingsStore(application)
 
@@ -37,6 +37,11 @@ class ChatViewModel(
     fun updateSettings(newSettings: AppSettings) {
         _settings.value = newSettings
         settingsStore.save(newSettings)
+    }
+
+    fun removeMcpServer(server: com.hicham.llmchat.model.McpServerConfig) {
+        settingsStore.deleteMcpServerCredential(server.name)
+        updateSettings(_settings.value.copy(mcpServers = _settings.value.mcpServers.filterNot { it == server }))
     }
 
     fun updateInput(text: String) {
@@ -56,15 +61,12 @@ class ChatViewModel(
         _uiState.update { it.copy(messages = historyForRequest, input = "", isStreaming = true, error = null) }
 
         viewModelScope.launch(Dispatchers.IO) {
-            modelProvider.runConversation(historyForRequest, object : ConversationListener {
+            assistantRuntime.runConversation(historyForRequest, object : ConversationListener {
                 override fun onUpdate(messages: List<ChatMessage>) {
                     _uiState.update { it.copy(messages = messages.toList()) }
                 }
 
-                override fun onToolCall(name: String, result: String) {
-                    // Tool calls render inline via the message blocks themselves;
-                    // this hook remains available for future runtime telemetry/UI.
-                }
+                override fun onToolCall(name: String, result: String) = Unit
 
                 override fun onError(message: String) {
                     _uiState.update { it.copy(error = message, isStreaming = false) }
