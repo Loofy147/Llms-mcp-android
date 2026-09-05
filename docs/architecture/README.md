@@ -12,7 +12,11 @@ This directory is the controlled architectural reference for `Llms-mcp-android`.
 
 `../security/PRIVACY_SECURITY_INVARIANTS_v0.2.md` is the current security/privacy baseline.
 
-`REVIEW_CHECKLIST_v0.2.md` is the implementation gate.
+`REVIEW_CHECKLIST_v0.2.md` is the implementation and promotion gate.
+
+`CURRENT_STATE_AUDIT_2026-09-05.md` is the current whole-app implementation truth record after PR #7.
+
+`PERSONAL_DEVELOPER_CAPABILITY_RESEARCH_2026-09-05.md` translates the verification-first thesis into a proposed capability catalog and benchmark for personal developer use. It is research input, not yet a committed runtime catalog.
 
 `ECOSYSTEM_RESEARCH_2026-09.md` remains research input. External repositories and protocols do not override the architecture.
 
@@ -30,6 +34,22 @@ Tool = exposure/interface
 Capability = controlled primitive effect
 Action = reusable execution contract
 ```
+
+## Verification-first principle
+
+Automation priority is increased when a capability has high observability, independent verification, clear scope, useful reuse, and reversible/idempotent behavior. High ambiguity, high consequence, and external uncertainty lower priority.
+
+The preferred progression is:
+
+```text
+observable effect
+    -> independent verification
+    -> attributable evidence
+    -> safe automation
+    -> broader composition
+```
+
+This principle is a prioritization heuristic and must be validated by measured runs rather than treated as a universal law.
 
 ## Pattern laboratory rule
 
