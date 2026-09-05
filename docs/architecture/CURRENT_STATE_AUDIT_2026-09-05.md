@@ -55,10 +55,10 @@ AssistantRuntime
    -> AnthropicModelProvider / AnthropicClient
    -> EgressPolicy
    -> HTTPS transport
-   -> provider
+   -> Anthropic
 ```
 
-Provider-side MCP remains inside the Anthropic adapter and is explicitly not yet an internal protocol adapter.
+This egress control is an application->Anthropic boundary. It does **not** mean the application currently controls every downstream network interaction made by the Anthropic provider on behalf of a configured MCP server. Provider-side MCP therefore remains a separate trust boundary and is an explicit open gate.
 
 ## 3. Component truth table
 
@@ -75,7 +75,7 @@ Provider-side MCP remains inside the Anthropic adapter and is explicitly not yet
 | `PolicyEngine` | authorization gate | Minimal allow/deny/approval policy; post-approval only `ALLOW` executes |
 | `ApprovalStore` | approval persistence | Exact-bound, one-use approval context; journal implementation exists |
 | `RuntimeStore` | durable runtime state | Journal implementation persists Runs/effects and supports recovery/reconciliation |
-| `EgressPolicy` | remote-data decision boundary | Enforces HTTPS, host allowlist, embedded-credential rejection, declared data-class admission |
+| `EgressPolicy` | remote-data decision boundary | Enforces HTTPS, host allowlist, embedded-credential rejection, declared data-class admission for current app->provider requests |
 | `CredentialStore` | secret boundary | Android Keystore-backed encrypted credential storage |
 | `AnthropicClient` | provider transport | HTTP/streaming/provider-side MCP transport; not local authority |
 | `SettingsStore` | ordinary configuration | Preferences/configuration separated from credential material |
@@ -146,15 +146,17 @@ Required proof: pending approval survives Activity/process restart and resumes t
 
 ### G4 — Egress data minimization
 
-The current egress layer authorizes declared categories and destinations. It does not inspect payload fields to minimize, redact, or enforce per-data-class destination policy.
+The current egress layer authorizes declared categories and destinations for the **application's direct remote request**. It does not inspect payload fields to minimize, redact, or enforce per-data-class destination policy.
 
-Required proof: classified payload transformation plus deny/allow tests for sensitive fields and destinations.
+Moreover, provider-side MCP calls are not currently represented as individual local egress decisions because MCP execution remains provider-owned. This is a distinct unresolved trust/egress boundary.
+
+Required proof: classified payload transformation plus deny/allow tests for sensitive fields and destinations, followed by an explicit policy model for provider-side MCP if local authorization is expected to cover it.
 
 ### G5 — Internal MCP adapter
 
 Current MCP connector handling remains provider-owned inside the Anthropic transport adapter.
 
-Required proof: MCP request/response translation into local Activation/Action/Capability semantics without transferring authority to the protocol layer.
+Required proof: MCP request/response translation into local Activation/Action/Capability semantics without transferring authority to the protocol layer, or an explicit product decision to keep provider-side MCP as an external trust boundary.
 
 ### G6 — Real Android/device capabilities
 
@@ -182,6 +184,7 @@ The current repository must not be described as having:
 - production-grade process-death recovery evidence;
 - a native internal MCP adapter;
 - complete payload minimization/redaction;
+- local application-level authorization over provider-side MCP destinations;
 - tamper-evident audit logging;
 - broad Android-native automation integration;
 - production profile/policy management;
@@ -191,8 +194,8 @@ The current repository must not be described as having:
 
 1. Android approval UI + process-death integration test.
 2. Capability-specific reconciliation proof against one real external effect.
-3. Egress minimization/redaction and data-class policy.
-4. Native internal MCP adapter.
+3. Egress minimization/redaction and an explicit provider-side MCP trust/egress decision.
+4. Native internal MCP adapter if local authorization over MCP effects is required.
 5. First real Android/device CapabilityExecutor adapter.
 6. Evidence/audit hardening and backup/export/log review.
 7. Only then expand activation surfaces, profiles, background work, and higher-level Actions.
