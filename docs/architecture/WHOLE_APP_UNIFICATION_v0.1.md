@@ -1,7 +1,7 @@
 # Whole-App Unification v0.1
 
-Status: Active engineering baseline
-Date: 2026-09-04
+Status: Convergence baseline implemented; remaining integration gates explicit
+Date: 2026-09-05
 
 ## Purpose
 
@@ -24,42 +24,52 @@ Surface
   -> Evidence
 ```
 
-## Current migration rule
+## Current state
 
-The existing Anthropic conversation adapter remains responsible for provider transport and streaming. Local tool execution is behind the runtime's Action/Capability boundary. Remote provider requests also cross the local EgressPolicy boundary. MCP transport remains provider-owned until a native internal MCP adapter exists.
+The core structural convergence is implemented and merged into `main`.
 
-No new direct effectful path may be added to the UI, model adapter, or ToolRegistry.
+Completed in the current baseline:
+
+1. persistent approval context and one-use consumption;
+2. one Android runtime composition root using durable runtime/approval journals;
+3. native local tools represented as Action/Capability definitions;
+4. model local-tool calls routed through the runtime;
+5. direct effect responsibility removed from `ToolRegistry`;
+6. MCP credential cleanup enforced through settings persistence;
+7. explicit local `EgressPolicy` before current remote provider HTTP requests;
+8. capability execution placed behind `CapabilityExecutor`;
+9. startup recovery of stale `RESERVED` effects into explicit `UNKNOWN` state;
+10. post-approval policy re-evaluation with only `ALLOW` permitted to execute.
 
 ## Authority rules
 
 - `AgentRuntime` owns execution admission and lifecycle semantics.
-- `CapabilityExecutor` is the only runtime-owned effect boundary.
+- `CapabilityExecutor` is the runtime-owned local effect boundary.
 - `EgressPolicy` is the local decision boundary for remote data transmission.
 - `ToolRegistry` may describe model-facing tools but must not execute effects directly.
 - `ModelProvider` may reason/stream but cannot authorize effects.
-- `SettingsStore` persists preferences/configuration; `CredentialStore` owns secrets.
+- `SettingsStore` persists preferences/configuration; `CredentialStore` owns credential material.
 - A provider adapter cannot bypass local policy or approval by issuing a local effectful tool call.
 - Remote/provider execution does not transfer local authorization ownership.
 
-## Migration order
+## Remaining migration order
 
-1. Stabilize persistent approval and terminal-state semantics.
-2. Introduce one application-level runtime composition root for durable runtime stores and capability adapters.
-3. Convert native local tools into Action/Capability implementations.
-4. Route model tool calls through the runtime boundary.
-5. Remove direct execution responsibility from `ToolRegistry`.
-6. Fix settings/credential lifecycle leaks and backup/privacy surfaces.
-7. Introduce explicit local EgressPolicy before protected remote data flows.
-8. Extract MCP into an internal protocol adapter whose locally authorized effects converge on runtime semantics.
-9. Add Android lifecycle/process-death integration tests.
-10. Only then expand activation surfaces.
+1. Add Android approval UI presentation/resumption.
+2. Validate approval and durable runtime behavior through real Android process death/restart.
+3. Add capability-specific reconciliation against at least one real external effect.
+4. Add richer egress classification, minimization, redaction, and per-data-class policy.
+5. Extract MCP into an internal protocol adapter whose locally authorized effects converge on runtime semantics.
+6. Add real Android/device CapabilityExecutor adapters with platform permission mapping.
+7. Define immutable/tamper-evident evidence/audit semantics and retention/corruption handling.
+8. Review backup/export/logging/telemetry privacy surfaces.
+9. Only then expand activation surfaces, profiles, background execution, and richer Actions.
 
 ## Current egress slice
 
-`EgressRequest` classifies the broad data carried by a remote request (`USER_CONTENT`, `USER_CONFIGURATION`, `CREDENTIAL`). `AllowlistEgressPolicy` currently enforces HTTPS and an explicit destination-host allowlist, and rejects credentials embedded in destination URLs. The Android composition currently allows only `api.anthropic.com`.
+`EgressRequest` classifies broad data carried by a remote request (`USER_CONTENT`, `USER_CONFIGURATION`, `CREDENTIAL`). `AllowlistEgressPolicy` enforces HTTPS, an explicit destination-host allowlist, rejection of credentials embedded in destination URLs, and declared data-class admission. The Android composition currently allows only `api.anthropic.com`.
 
-This is a control boundary, not yet a complete classification, minimization, or redaction system.
+This is an admission/classification boundary, not yet a complete payload minimization, redaction, or fine-grained data-class policy system.
 
 ## Promotion criterion
 
-The migration is not considered complete while an effect can execute through a path other than `CapabilityExecutor`, while protected remote data can bypass `EgressPolicy`, or while the UI/model path and runtime path maintain conflicting authority semantics.
+The migration is not considered complete while an effect can execute through a path other than `CapabilityExecutor`, protected remote data can bypass `EgressPolicy`, Android process-death/restart behavior lacks integration evidence, or the UI/model path and runtime path maintain conflicting authority semantics.
