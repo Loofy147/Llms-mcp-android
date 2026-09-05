@@ -7,7 +7,7 @@ import org.junit.Test
 
 class ControlPlaneGateTest {
     @Test
-    fun postApprovalApprovalRequiredNeverExecutes() {
+    fun postApprovalSatisfiesApprovalRequirementAndExecutesOnce() {
         var executions = 0
         val action = ActionDefinition(
             id = "protected_write",
@@ -36,9 +36,8 @@ class ControlPlaneGateTest {
             approverIdentity = "approver"
         )
 
-        assertEquals(RunStatus.FAILED, resolved?.status)
-        assertEquals("Policy still requires approval after approval", resolved?.denialReason)
-        assertEquals(0, executions)
+        assertEquals(RunStatus.SUCCEEDED, resolved?.status)
+        assertEquals(1, executions)
     }
 
     @Test
