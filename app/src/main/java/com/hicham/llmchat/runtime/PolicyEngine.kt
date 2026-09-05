@@ -4,7 +4,7 @@ class PolicyEngine(
     private val allowHighImpact: Boolean = false,
     private val requireApprovalForReversible: Boolean = false
 ) {
-    fun evaluate(request: ActivationRequest, action: ActionDefinition): PolicyDecision {
+    fun evaluate(request: ActivationRequest, action: ActionDefinition, approvalSatisfied: Boolean = false): PolicyDecision {
         if (request.identity.isBlank()) return PolicyDecision.DENY
 
         if (action.capabilities.any { it.id.isBlank() }) {
@@ -15,10 +15,10 @@ class PolicyEngine(
             return PolicyDecision.DENY
         }
 
-        if (
-            action.approvalMode == ApprovalMode.REQUIRED ||
-            (requireApprovalForReversible && action.capabilities.any { it.effect == EffectClass.REVERSIBLE })
-        ) {
+        if (!approvalSatisfied && (
+                action.approvalMode == ApprovalMode.REQUIRED ||
+                (requireApprovalForReversible && action.capabilities.any { it.effect == EffectClass.REVERSIBLE })
+            )) {
             return PolicyDecision.APPROVAL_REQUIRED
         }
 
