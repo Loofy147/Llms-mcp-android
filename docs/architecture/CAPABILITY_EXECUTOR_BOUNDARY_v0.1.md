@@ -1,11 +1,11 @@
 # Capability Executor Boundary v0.1
 
-Status: Engineering proof
-Date: 2026-09-04
+Status: Implemented vertical proof
+Date: 2026-09-05
 
 ## Purpose
 
-The CapabilityExecutor is the sole runtime-owned execution boundary for capability effects.
+`CapabilityExecutor` is the sole runtime-owned execution boundary for capability effects in the current control-plane design.
 
 ```text
 Activation
@@ -30,6 +30,8 @@ Activation
 
 Unknown capability IDs fail closed. There is no fallback path from a missing executor to Action reduction.
 
+Remote transport is separately guarded by the application `EgressPolicy`; the current provider transport remains an adapter and is not treated as a local CapabilityExecutor implementation. MCP connector execution is still provider-owned and therefore remains an explicit architectural limitation.
+
 ## Trust boundary
 
 The executor implementation is an adapter owned by the application/runtime integration layer. It may delegate to Android APIs, local storage, HTTP, MCP, or other domains, but those adapters must preserve the invocation identity, scope, attribution, and policy context supplied by the runtime.
@@ -44,17 +46,26 @@ The runtime test suite verifies:
 - capability output is supplied through the executor;
 - undeclared capabilities and out-of-scope invocations fail before execution;
 - duplicate effect identities fail before execution;
-- replay protection still prevents the executor from being called twice for the same durable effect;
-- a missing executor fails closed without falling back to Action reduction.
+- replay protection prevents the executor from being called twice for the same durable effect;
+- a missing executor fails closed without falling back to Action reduction;
+- model-facing local tool calls converge on the same runtime path.
+
+The Android composition wires `RegistryCapabilityExecutor` through `AndroidRuntimeFactory` for the current native time and arithmetic capabilities.
+
+## Related control gates already present
+
+- persistent approval context is implemented through `ApprovalStore`/`JournalApprovalStore` and bound to the exact Run, requester, Action/version, input, planned invocations, and fingerprint;
+- explicit `EgressPolicy`/`EgressDecision` gates current remote provider requests;
+- `JournalRuntimeStore` provides durable effect reservation, completion, `UNKNOWN` state, and reconciliation primitives;
+- startup recovery converts interrupted `RESERVED` effects to `UNKNOWN` once per application process.
 
 ## Explicit non-claims
 
 This boundary does not yet provide:
 
-- persistent approval artifacts;
-- EgressDecision;
-- capability-specific reconciliation of UNKNOWN effects;
-- Android process-death recovery validation;
-- real Android/device capability adapters.
-
-Those remain subsequent gates.
+- exactly-once guarantees for external effects;
+- capability-specific reconciliation against real external systems;
+- Android process-death integration evidence;
+- real Android/device capability adapters beyond the current deterministic built-ins;
+- complete data minimization/redaction before egress;
+- a native internal MCP adapter.
