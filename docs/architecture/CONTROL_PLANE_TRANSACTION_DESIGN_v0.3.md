@@ -1,6 +1,6 @@
 # Unified Control-Plane Transaction Design v0.3
 
-Status: Implementation preparation baseline
+Status: Reviewed proposal — NOT approved
 Date: 2026-09-06
 
 ## 1. Purpose
@@ -11,7 +11,7 @@ The design deliberately separates semantic correctness from storage technology. 
 
 ## 2. Transaction boundary
 
-The logical transaction is:
+The desired logical transaction is:
 
 ```text
 Approve pending Run
@@ -20,6 +20,8 @@ Approve pending Run
   + reserve all planned effects
   = one durable admission to execution
 ```
+
+This statement is a **target property**, not a claim about the current implementation.
 
 The transaction does NOT include the external capability side effect itself. External exactly-once execution is not claimed.
 
@@ -31,6 +33,10 @@ For an approval-required Run:
 WAITING_APPROVAL
       |
       | resolve(APPROVED)
+      v
+APPROVED_UNBOUND
+      |
+      | bind execution claim
       v
 EXECUTION_CLAIMED
       |
@@ -45,7 +51,7 @@ RUNNING
 TERMINAL
 ```
 
-`EXECUTION_CLAIMED` is a durable control-plane state, even if the public Run enum keeps `RUNNING` as the externally visible execution state. The implementation may represent the claim as a separate record/lease rather than expanding the enum immediately.
+`EXECUTION_CLAIMED` is a durable control-plane state, even if the public Run enum keeps `RUNNING` as the externally visible execution state. The implementation may represent the claim as a separate record/event rather than expanding the enum immediately.
 
 ## 4. Required identities
 
@@ -59,6 +65,7 @@ approver identity
 approval fingerprint
 action id + version + immutable semantic identity
 planned invocation set identity
+executionClaimId
 effect identities
 ```
 
@@ -72,7 +79,7 @@ For a given `runId`, at most one approval resolution may successfully acquire th
 
 A second concurrent resolver must receive a deterministic non-success result and must not execute capabilities.
 
-This requires compare-and-set semantics in the durable store; an in-memory lock is insufficient for multiple store instances/processes.
+This requires compare-and-set semantics in the durable persistence boundary; an in-memory lock is insufficient for multiple store instances/processes.
 
 ## 6. Atomic reservation rule
 
@@ -96,21 +103,28 @@ or:
 none are RESERVED
 ```
 
-A partial prefix must never represent a successful reservation result.
+A partial prefix must never represent a successful group reservation.
+
+This guarantee concerns control-plane admission only; it does not make the external effects themselves atomic.
 
 ## 7. Recovery classification
 
-After process restart, durable state must classify an approved operation as one of:
+After process restart, durable state must classify an interrupted operation as one of:
 
 ```text
+WAITING_APPROVAL
 SAFE_TO_START
-RUNNING / EFFECTS_UNKNOWN
+SAFE_TO_RESUME
+EFFECTS_UNKNOWN
 TERMINAL
+MANUAL_RECONCILIATION_REQUIRED
 ```
 
-Recovery must not infer external completion from the existence of an approval or a local `RUNNING` record.
+`SAFE_TO_START` is permitted only when no committed effect exists or the effect's replay semantics explicitly permit another admission.
 
-Reserved effects without terminal evidence become `UNKNOWN` and require explicit reconciliation before replay.
+`SAFE_TO_RESUME` means an existing execution owner can continue without re-admitting already-reserved effects.
+
+Recovery must not infer external completion from approval, a claim, or a local `RUNNING` record alone.
 
 ## 8. Terminality
 
@@ -125,9 +139,11 @@ CANCELLED
 
 Any stale callback, retry, or recovery operation attempting to write a different terminal or non-terminal state must be rejected or ignored according to an explicit transition result.
 
+Terminality must be enforced by the durable write path, not merely asserted by tests.
+
 ## 9. Journal protocol
 
-An append-only implementation should record logical transaction events, not rely on reading a partially written sequence as if it were atomic.
+An append-only implementation should record logical transaction events, not rely on a partially written sequence as if it were atomic.
 
 Preferred event vocabulary:
 
@@ -142,22 +158,33 @@ EFFECT_UNKNOWN
 RUN_TERMINAL
 ```
 
-The replay reducer reconstructs the state machine. A transaction is considered committed only when its required event set is durably present according to the protocol.
+The replay reducer reconstructs the state machine. A transaction is considered committed only when its required event set is durably present according to the persistence protocol.
+
+Fault injection must distinguish:
+
+```text
+prepared
+committed
+visible after reopen
+```
+
+because an exception does not prove that a durable write did not happen.
 
 ## 10. Storage requirements
 
-The store implementation must provide:
+The target store implementation must provide:
 
 ```text
-begin/commit logical transaction
+atomic logical transaction / equivalent CAS protocol
 compare-and-set approval state
-compare-and-set run execution claim
+compare-and-set execution claim
 atomic group effect reservation
 append/force durability
 replay with torn-final-record tolerance
+terminal transition validation
 ```
 
-A future SQLite implementation is acceptable, but not required by this contract. The current file journal should first be strengthened enough to prove the semantics in tests.
+A future SQLite implementation is acceptable, but not required by this contract. The storage technology must be chosen only after proving that it can supply the protocol properties under Android-relevant concurrency.
 
 ## 11. Crash points for E-13
 
@@ -165,15 +192,16 @@ Inject failure after each of:
 
 ```text
 A approval decision validated
-B execution claim prepared
-C execution claim committed
-D effect reservation committed
-E capability execution started
-F capability execution returned
-G terminal Run committed
+B approval decision committed
+C execution claim prepared
+D execution claim committed
+E effect reservation committed
+F capability execution started
+G capability execution returned
+H terminal Run committed
 ```
 
-Expected outcome is deterministic classification without lost approval or silent duplicate admission.
+Expected outcome is deterministic classification without lost authorization or silent duplicate admission.
 
 ## 12. Concurrency cases for E-14
 
@@ -192,9 +220,24 @@ single winner
 no duplicate execution admission
 no mixed approval states
 no partial successful reservation
+no terminal-state regression
 ```
 
-## 13. Non-goals
+## 13. Edge cases
+
+The protocol must explicitly define Actions with zero CapabilityInvocations. Such Runs require normal authorization, terminal transition, and evidence semantics but do not require an effect reservation group.
+
+The identity hierarchy must remain distinct:
+
+```text
+runId              execution attempt
+executionClaimId   execution ownership
+reservationGroupId atomic reservation-set identity
+effectId           individual effect/replay identity
+idempotencyKey     caller/domain replay key
+```
+
+## 14. Non-goals
 
 This protocol does not provide:
 
