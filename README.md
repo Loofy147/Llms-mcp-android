@@ -6,7 +6,17 @@ A native Android Kotlin/Jetpack Compose project evolving into a **user-owned mob
 
 The product is a personal assistant on the phone that can execute bounded operations, not only converse.
 
-The application now has an explicit application-level `AssistantRuntime` facade and a canonical `AgentRuntime` control plane. Chat remains a user-facing reasoning surface; it is not an independent effect authority.
+The application has one explicit runtime authority: `AgentRuntime`, composed for the Android app through `AndroidRuntimeFactory` and exposed to the active UI flow through `AssistantRuntime`. Chat is a reasoning/user surface; it is not an independent effect authority.
+
+## Current status
+
+The application-wide runtime convergence described by PR #7 is merged into `main`.
+
+Reference commit: `0fccaea041c9dc39a1183f44418897e43433f73a`
+
+CI on the merged commit completed successfully on 2026-09-05. This confirms the repository's JVM tests, debug APK build, and artifact upload pipeline; it does not constitute real-device or production evidence.
+
+For the detailed post-merge state, see `docs/architecture/CURRENT_STATE_AUDIT_2026-09-05.md`.
 
 ## Canonical execution model
 
@@ -31,11 +41,14 @@ The model may reason and request a tool, but a model response never authorizes a
 
 - `docs/architecture/NORTH_STAR_ARCHITECTURE_v0.2.md`
 - `docs/architecture/IMPLEMENTATION_RECONCILIATION_v0.2.md`
+- `docs/architecture/CURRENT_STATE_AUDIT_2026-09-05.md`
 - `docs/architecture/WHOLE_APP_UNIFICATION_v0.1.md`
 - `docs/architecture/DECISION_REGISTER_v0.2.md`
 - `docs/architecture/ASSUMPTION_REGISTER_v0.2.md`
 - `docs/architecture/REVIEW_CHECKLIST_v0.2.md`
 - `docs/architecture/ACTION_MODEL_v0.2.md`
+- `docs/architecture/CAPABILITY_EXECUTOR_BOUNDARY_v0.1.md`
+- `docs/architecture/DURABLE_RUNTIME_GATE_v0.1.md`
 - `docs/architecture/ECOSYSTEM_RESEARCH_2026-09.md`
 - `docs/security/PRIVACY_SECURITY_INVARIANTS_v0.2.md`
 
@@ -43,7 +56,7 @@ The model may reason and request a tool, but a model response never authorizes a
 
 ### Unified application boundary
 
-`MainActivity` constructs one `AssistantRuntime`. `ChatViewModel` talks to that facade instead of constructing or calling a provider directly.
+`MainActivity` creates `AssistantRuntime`. The current Chat/Model path talks to that facade rather than constructing a provider as a separate local execution authority.
 
 ### Canonical local tool path
 
@@ -57,8 +70,10 @@ Model tool call
   -> ActionCatalog
   -> PolicyEngine
   -> AgentRuntime
-  -> CapabilityInvocation
+  -> ActionPlan
+  -> durable effect reservation
   -> CapabilityExecutor
+  -> Observation / Verification / Evidence
 ```
 
 The built-in local tools are represented as canonical Actions:
@@ -70,36 +85,39 @@ Arithmetic is explicitly bounded and does not use `eval` or a scripting engine.
 
 ### Durable control state
 
-`AgentRuntime` uses durable runtime and approval journals through `AndroidRuntimeFactory`. Effect identity, duplicate blocking, unknown-effect reconciliation state, and persistent approval context are controlled by the runtime boundary.
+The Android runtime composition uses `JournalRuntimeStore` and `JournalApprovalStore` by default. Effect identity, duplicate blocking, `UNKNOWN` effect state, reconciliation primitives, persistent approval context, and durable Run/Evidence snapshots are controlled by the runtime boundary.
 
-Approval decisions are one-use and bound to the exact Run, requester identity, Action/version, input, and planned invocations.
+Approval decisions are one-use and bound to the exact Run, requester identity, Action/version, input, planned invocations, and fingerprint.
 
 ### Local egress boundary
 
-Remote model requests now cross an explicit `EgressPolicy` before the HTTP request is executed. The current policy allows only HTTPS requests to the explicit provider host `api.anthropic.com`; destination validation rejects unlisted hosts, non-HTTPS destinations, and credentials embedded in destination URLs.
+Remote model requests cross an explicit `EgressPolicy` before the HTTP request is executed. The current policy requires HTTPS, uses an explicit host allowlist, rejects credentials embedded in destination URLs, and checks the declared data classes. The Android composition currently allows only `api.anthropic.com`.
 
-This is a boundary implementation, not yet a complete data-classification/redaction system.
+This is an admission/classification boundary, not yet a complete data-minimization or redaction system.
 
 ### Secrets and settings
 
-Credentials are isolated in a Keystore-backed `CredentialStore`; ordinary settings do not persist plaintext API/MCP credentials. MCP credential material is removed when its server is removed through the settings surface.
+Credentials are isolated behind a Keystore-backed `CredentialStore`; ordinary settings do not persist plaintext API/MCP credentials. Legacy API-key migration and MCP credential cleanup are implemented.
 
-## Explicitly not complete
+## Important boundaries that remain open
 
-The project is still a vertical proof rather than a production-ready agent runtime.
+The project is still a vertical proof rather than a production-ready autonomous runtime.
 
-Open gates include:
+Open engineering gates include:
 
-- richer local data classification, minimization, and redaction before egress;
-- Android process-death/restart integration validation;
-- capability-specific reconciliation adapters;
-- extraction of MCP into an internal protocol adapter rather than leaving the current connector semantics inside the Anthropic provider;
-- persistent conversation history;
+- Android process-death/restart integration evidence;
+- Android approval presentation/resumption;
+- capability-specific reconciliation against real external systems;
+- complete content minimization/redaction and finer-grained egress policy;
+- immutable/tamper-evident audit semantics;
+- native internal MCP adapter extraction;
+- real Android/device CapabilityExecutor adapters beyond the current deterministic built-ins;
 - broader Android-native activation surfaces;
-- production policy/profile management;
-- backup/export/privacy review beyond the current credential boundary.
+- production profile/policy management;
+- backup/export/logging/telemetry privacy review;
+- real-device performance and correctness evidence.
 
-These are engineering gates, not hidden feature claims.
+The repository must not be described as providing exactly-once external execution or unrestricted autonomous background execution.
 
 ## Build
 
