@@ -42,7 +42,7 @@ class AgentRuntime(
                 else -> run.copy(status = RunStatus.FAILED, denialReason = "Approval could not be consumed").also(store::saveRun)
             }
         }
-        return when (policy.evaluate(run.activation, action)) {
+        return when (policy.evaluate(run.activation, action, approvalSatisfied = true)) {
             PolicyDecision.ALLOW -> when (approvalStore.consume(approvalId, runId, context.requesterIdentity, context.fingerprint, decision, approverIdentity)) {
                 ApprovalConsumption.CONSUMED -> execute(run.activation, action, currentPlan, run)
                 ApprovalConsumption.NOT_PENDING -> run.copy(status = RunStatus.FAILED, denialReason = "Approval already consumed").also(store::saveRun)
