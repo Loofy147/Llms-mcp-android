@@ -18,7 +18,7 @@ class AgentRuntime(
         return when (policy.evaluate(request, action)) {
             PolicyDecision.DENY -> Run(activation = request, status = RunStatus.DENIED, action = action, denialReason = "Policy denied Action").also(store::saveRun)
             PolicyDecision.APPROVAL_REQUIRED -> requestApproval(request, action)
-            PolicyDecision.ALLOW -> execute(request, action, action.plan(request.input))
+            PolicyDecision.ALLOW -> planAndExecute(request, action)
         }
     }
 
@@ -52,6 +52,20 @@ class AgentRuntime(
             PolicyDecision.DENY -> run.copy(status = RunStatus.DENIED, denialReason = "Policy denied Action after approval").also(store::saveRun)
             PolicyDecision.APPROVAL_REQUIRED -> run.copy(status = RunStatus.FAILED, denialReason = "Policy still requires approval after approval").also(store::saveRun)
         }
+    }
+
+    private fun planAndExecute(request: ActivationRequest, action: ActionDefinition): Run {
+        val plan = try {
+            action.plan(request.input)
+        } catch (e: Exception) {
+            return Run(
+                activation = request,
+                status = RunStatus.FAILED,
+                action = action,
+                denialReason = e.message ?: "Action planning failed"
+            ).also(store::saveRun)
+        }
+        return execute(request, action, plan)
     }
 
     private fun requestApproval(request: ActivationRequest, action: ActionDefinition): Run {
