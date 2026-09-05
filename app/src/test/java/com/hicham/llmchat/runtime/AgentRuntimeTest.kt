@@ -43,6 +43,23 @@ class AgentRuntimeTest {
     }
 
     @Test
+    fun directPlanningFailureBecomesPersistedFailedRun() {
+        val action = ActionDefinition(
+            id = "plan_failure",
+            version = 1,
+            purpose = "planning failure boundary",
+            capabilities = emptyList(),
+            reduce = { _, _ -> error("must not reduce") },
+            plan = { error("planner exploded") }
+        )
+        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), RegistryCapabilityExecutor(emptyMap()))
+        val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "plan_failure"))
+        assertEquals(RunStatus.FAILED, run.status)
+        assertEquals("planner exploded", run.denialReason)
+        assertNull(run.evidence)
+    }
+
+    @Test
     fun deniedActionDoesNotExecute() {
         val action = ActionDefinition(
             id = "danger",
