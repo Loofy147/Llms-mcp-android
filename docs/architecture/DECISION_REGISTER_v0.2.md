@@ -1,7 +1,7 @@
 # Decision Register v0.2
 
-Status: Proposed architecture reconciliation baseline
-Date: 2026-09-03
+Status: Active architecture reconciliation baseline
+Date: 2026-09-05
 Supersedes: `DECISION_REGISTER_v0.1.md` for new design decisions
 
 ## Decision classes
@@ -30,8 +30,28 @@ Supersedes: `DECISION_REGISTER_v0.1.md` for new design decisions
 | D-11 | Verification and Evidence are first-class execution outputs; model prose alone is not evidence. | ACCEPTED |
 | D-12 | Remote execution does not transfer local authorization ownership. | ACCEPTED |
 | D-13 | Model providers and interoperability protocols are replaceable adapters behind stable internal semantics. | ACCEPTED |
-| D-14 | One runtime core supports Personal, Developer, and Product/Public profiles. | ACCEPTED |
+| D-14 | One runtime core is intended to support Personal, Developer, and Product/Public profiles. | ACCEPTED |
 | D-15 | Important control-plane state is durable and recoverable; execution attempts have explicit identity and terminal-state semantics. | ACCEPTED |
+| D-16 | Capability adoption should be prioritized by independent verifiability and observability before breadth of autonomy. | ACCEPTED |
+
+## Verification-first design principle
+
+The project adopts the following prioritization heuristic:
+
+```text
+Higher automation priority when:
+  observability ↑
+  independent verifiability ↑
+  scope clarity ↑
+  reuse ↑
+  reversibility/idempotency ↑
+  consequence ↓
+  external uncertainty ↓
+```
+
+This is a roadmap heuristic, not a mathematical law. It must be validated with measured runs.
+
+The practical implication is that deterministic developer operations such as repository inspection, diff inspection, tests, builds, artifact inspection, and configuration validation are preferred early proving grounds for the runtime.
 
 ## Core semantic relationship
 
@@ -93,8 +113,8 @@ Model      = optional reasoning component
 | T-02 | Android Keystore | Candidate primitive for protected credential material. |
 | T-03 | Room/equivalent | Candidate durable structured state store. |
 | T-04 | Official Kotlin MCP SDK | Preferred implementation substrate when native MCP adapter work begins. |
-| T-05 | Android App Functions | Adapter candidate; current Jetpack artifact is `1.0.0-alpha11` as of 2026-08-26. |
-| T-06 | Local model runtime (LiteRT-LM, ML Kit GenAI, etc.) | Provider implementation behind local model contract; no vendor lock-in. |
+| T-05 | Android App Functions | Adapter candidate; validate current platform maturity before adoption. |
+| T-06 | Local model runtime | Provider implementation behind local model contract; no vendor lock-in. |
 | T-07 | WorkManager | Candidate for supported persistent/deferred background work. |
 
 ## Required experiments
@@ -109,19 +129,43 @@ Model      = optional reasoning component
 | E-06 | Process death/retry around an external Action. | No unintended duplicate effect; durable attempt/effect identity. |
 | E-07 | Local versus remote ModelProvider behind same runtime contract. | Domain state and policy semantics unchanged. |
 | E-08 | Real Android/App Functions integration. | Adapter can be removed without changing core semantics. |
-| E-09 | Current MCP 2026-07-28 adapter path. | Protocol behavior remains outside core state/authority model. |
+| E-09 | Current MCP adapter path. | Protocol behavior remains outside core state/authority model. |
+| E-10 | Personal developer capability family. | At least 20 cases across 3+ repository/project states; measure verification quality and intervention rate. |
+| E-11 | Verification-first ranking. | Compare automation outcomes for high- versus low-verifiability capabilities. |
 
-## Research-derived experiments
+## Research-derived capability experiments
 
-| ID | Experiment | Rationale |
+| ID | Experiment | Evidence |
 |---|---|---|
-| M-E1 | Bounded multi-step Action loop. | METATRON demonstrates that an agent can iteratively request more information; our version must preserve one policy boundary per invocation and explicit runtime budgets. |
-| M-E2 | Raw versus derived observation compression. | METATRON compresses long tool output. Measure context/token reduction while preserving verification-critical facts and source provenance. |
-| M-E3 | Typed Action parameters versus free-form command dispatch. | Test whether stable semantic Actions reduce invalid/injection-prone execution requests while maintaining task success. |
-| M-E4 | Local-model continuation through the same runtime. | Preserve METATRON's local-first usability while keeping model provider replaceability. |
-| M-E5 | Durable effect identity under retry/process death. | Convert stable identity from a deterministic primitive into actual duplicate-effect protection only after persistence/reconciliation exists. |
-| M-E6 | Evidence provenance chain for derived observations. | Ensure summaries/compression remain traceable to authoritative raw observations/artifacts. |
-| M-E7 | Evidence-to-report Action. | Carry METATRON's useful export workflow into our Artifact/Egress model without turning mutable reports into evidence. |
+| M-E1 | Bounded multi-step Action loop. | Same policy path across 1..N invocations; no authority expansion. |
+| M-E2 | Raw vs compressed observations. | Context-size reduction without loss of verification-critical facts. |
+| M-E3 | Typed Action parameters vs free-form command dispatch. | Lower invalid/injection-prone invocation rate at comparable task success. |
+| M-E4 | Local model continuation. | Local provider can request follow-up Actions under the same runtime contract. |
+| M-E5 | Durable invocation/effect recovery. | Process death and retry preserve effect identity and avoid duplicate effects. |
+| M-E6 | Evidence provenance chain. | Derived observations remain traceable to raw observations/artifacts. |
+| M-E7 | Report Action. | Evidence can produce an exportable artifact without exposing secrets or bypassing egress policy. |
+
+## Personal developer capability direction
+
+The initial personal-developer capability family is intentionally narrow:
+
+```text
+dev.workspace.inspect
+dev.file.read
+dev.file.hash
+dev.directory.list
+dev.git.status
+dev.git.diff
+dev.git.log
+dev.test.run
+dev.build.run
+dev.artifact.inspect
+dev.config.validate
+```
+
+These are candidates for the first empirical capability family because their outputs are locally observable, mostly deterministic, and independently verifiable. Write/remote capabilities such as patching, commit, push, pull-request creation, release, deployment, and secret rotation come later with stronger approval and external-effect semantics.
+
+The full proposal and verification dimensions are documented in `PERSONAL_DEVELOPER_CAPABILITY_RESEARCH_2026-09-05.md`.
 
 ## Rejected / anti-goals
 
