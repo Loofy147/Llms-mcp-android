@@ -1,9 +1,9 @@
 # Implementation Reconciliation v0.2
 
 Status: Active engineering baseline
-Date: 2026-09-04
+Date: 2026-09-05
 
-This document freezes the distinction between accepted architecture and demonstrated implementation. It prevents architecture claims from being mistaken for completed implementation.
+This document freezes the distinction between accepted architecture and demonstrated implementation. It is the primary implementation-status matrix after the application-wide runtime convergence merge.
 
 ## 1. Established semantic decisions
 
@@ -20,30 +20,30 @@ This document freezes the distinction between accepted architecture and demonstr
 - external protocols/providers remain adapters;
 - ActionPlan is the canonical declaration of capability effects;
 - CapabilityExecutor is the controlled execution boundary for materialized CapabilityInvocations;
-- terminal Runs are immutable and replay attempts must not re-execute effects;
+- terminal Runs are immutable for the modeled approval/replay paths and replay attempts must not re-execute effects;
 - post-approval re-evaluation is terminal: only ALLOW may proceed to execution.
 
 ## 2. Reconciliation matrix
 
 | Area | Target architecture | Current implementation | Status | Next proof/fix |
 |---|---|---|---|---|
-| Action semantics | Reusable Action above CapabilityInvocation | ActionDefinition declares ActionPlan and performs effect-free reduction of capability results | PROVISIONALLY ALIGNED | Validate with real capability adapters |
-| Capability execution | Every effect crosses one controlled executor boundary | CapabilityExecutor receives only validated, durably reserved invocations; missing executors fail closed | PROVISIONALLY VERIFIED | Add Android/device adapter and negative bypass tests |
-| Invocation identity | Explicit invocation/effect identity and attribution | Invocation id, effectId, action/version, scope, attribution; stable idempotency key supported | PROVISIONALLY VERIFIED | Validate identity across real side effects |
-| Effect reservation | No effect executes before durable duplicate decision | Runtime materializes the ActionPlan and reserves all effect identities before executor calls | PROVISIONALLY VERIFIED | Capability-specific reconciliation proof |
-| Run state | Durable lifecycle and restart recovery | JournalRuntimeStore persists Run snapshots; runtime accepts durable store | PARTIAL | Android restart integration validation |
-| Evidence | Attributable observations + verification + invocations | Evidence persisted as part of Run journal snapshots | PARTIAL | Define immutable evidence/append-only audit contract |
-| Direct execution | Action can run without Model | Deterministic path covered by unit tests and executor-backed proof | PROVISIONALLY VERIFIED | Android/real-device validation |
-| Policy | Independent authorization boundary | Minimal in-memory PolicyEngine; post-approval APPROVAL_REQUIRED cannot execute | PROVISIONALLY VERIFIED | Persistent policy/control-plane path |
-| Approval | Distinct from denial and bound to operation/context | Durable ApprovalStore persists exact Run/action/version/input/plan fingerprint and consumes decisions once | PROVISIONALLY VERIFIED | Android approval UI + restart integration |
-| Egress | Explicit local decision before protected data leaves device | Provider requests cross EgressPolicy; current Android policy allows only HTTPS to explicit `api.anthropic.com` and rejects unlisted/non-HTTPS destinations | PROVISIONALLY VERIFIED | Richer classification/minimization/redaction and Android integration |
-| Model | Optional/provider-neutral | UI depends on ModelProvider; Anthropic is an adapter | PROVISIONALLY ALIGNED | Alternate provider test/adapter |
-| MCP | Adapter behind internal semantics | MCP remains inside current Anthropic adapter and provider-side execution path | PARTIAL | Introduce internal MCP adapter boundary |
-| Secrets | Keystore-backed credential boundary | CredentialStore uses Android Keystore; legacy plaintext migrated/removed | PROVISIONALLY ALIGNED | Android migration + backup/log review |
-| Settings | Preferences separate from secrets | SettingsStore and CredentialStore separated; `save()` removes credentials for servers absent from the persisted configuration | PROVISIONALLY VERIFIED | Verify backup/export/logging surfaces |
-| Activation | Shared entry for UI/automation/model/external surfaces | Runtime accepts ActivationSource; UI/model paths converge on AssistantRuntime/AgentRuntime | PARTIAL | Android-native activation adapters |
-| Profiles | Personal/Developer/Product share invariants | Not implemented | OPEN | After runtime core stabilizes |
-| Background execution | Android lifecycle-aware | No scheduler integrated into runtime | OPEN | WorkManager adapter after durable lifecycle is proven |
+| Action semantics | Reusable Action above CapabilityInvocation | `ActionDefinition` declares an `ActionPlan`; `reduce` is effect-free | PROVISIONALLY ALIGNED | Add richer Action contracts and real adapters |
+| Capability execution | Every material effect crosses one controlled executor boundary | `CapabilityExecutor` receives only validated, durably reserved invocations | PROVISIONALLY VERIFIED | Add real Android/device adapters and bypass tests |
+| Invocation identity | Explicit invocation/effect identity and attribution | Invocation id, effectId, Action/version, scope, attribution; stable idempotency key supported | PROVISIONALLY VERIFIED | Validate identity against real side effects |
+| Effect reservation | No effect executes before a durable duplicate decision | Complete materialized effect set is reserved before executor calls | PROVISIONALLY VERIFIED | Capability-specific reconciliation proof |
+| Run state | Durable lifecycle and restart recovery | `JournalRuntimeStore` persists Run snapshots; Android factory uses it by default | PARTIAL | Android process-death integration |
+| Evidence | Attributable observations + verification + invocations | `Evidence` is part of Run and is journal-persisted | PARTIAL | Immutable append-only evidence/audit contract |
+| Direct execution | Action can run without Model | Native deterministic Actions execute through the runtime without a model | PROVISIONALLY VERIFIED | Real-device validation |
+| Policy | Independent authorization boundary | `PolicyEngine` performs local allow/deny/approval admission; post-approval only ALLOW executes | PROVISIONALLY VERIFIED | Persistent policy/profile model |
+| Approval | Distinct from denial and bound to operation/context | `JournalApprovalStore` persists exact Run/requester/Action/version/input/plan fingerprint and consumes once | PROVISIONALLY VERIFIED | Android approval UI + restart integration |
+| Egress | Explicit local decision before protected data leaves device | Current Anthropic requests cross `EgressPolicy`; HTTPS + host + data-class checks are enforced | PROVISIONALLY VERIFIED | Minimization/redaction and fine-grained policy |
+| Model | Optional/provider-neutral | `ModelProvider` boundary with Anthropic adapter | PROVISIONALLY ALIGNED | Alternate provider integration test |
+| MCP | Adapter behind internal semantics | Current MCP connector remains inside Anthropic/provider path | PARTIAL | Native internal MCP adapter |
+| Secrets | Protected credential boundary | `CredentialStore` uses Android Keystore-backed AES/GCM; legacy plaintext migration exists | PROVISIONALLY ALIGNED | Backup/log/crash/export review |
+| Settings | Preferences separate from secrets | `SettingsStore` and `CredentialStore` are separated; removed MCP servers trigger credential cleanup | PROVISIONALLY VERIFIED | Broader persistence/privacy review |
+| Activation | Shared entry for UI/automation/model/external surfaces | Runtime accepts `ActivationSource`; current Chat/model path converges through `AssistantRuntime` | PARTIAL | Android-native activation adapters |
+| Profiles | Personal/Developer/Product share invariants | Profile-specific runtime policy is not implemented | OPEN | Implement only after runtime core stabilizes |
+| Background execution | Android lifecycle-aware | No general scheduler/runtime background adapter is integrated | OPEN | WorkManager adapter after lifecycle proof |
 
 ## 3. Active boundaries
 
@@ -51,17 +51,17 @@ This document freezes the distinction between accepted architecture and demonstr
 
 The application exposes a provider-neutral `ModelProvider`; `AnthropicModelProvider` and `AnthropicClient` contain vendor-specific transport/streaming semantics.
 
-Remaining limitation: the adapter still owns the current conversation/MCP implementation, so provider neutrality is not yet a complete runtime property.
+Remaining limitation: the current conversation/MCP implementation still lives in the provider adapter, so provider neutrality is not yet a complete runtime property.
 
-### C-02 — Plaintext secret persistence — RESOLVED AT STORAGE BOUNDARY
+### C-02 — Plaintext secret persistence — CONTROLLED AT STORAGE BOUNDARY
 
-Credentials are separated from ordinary settings and protected with an Android Keystore-backed boundary.
+Credentials are separated from ordinary settings and protected with Android Keystore-backed AES/GCM storage.
 
-Remaining limitation: device-level migration and backup/export/crash/log review remain open.
+Remaining limitation: device migration behavior and backup/export/crash/log review are still open.
 
 ### C-03 — Tool versus Action/Capability — CONTROLLED
 
-`ToolRegistry` is descriptive-only. Model tool calls are translated by `RuntimeToolGateway` into `ActivationSource.MODEL` requests and run through `AgentRuntime`.
+`ToolRegistry` is descriptive-only. Local model tool calls are translated by `RuntimeToolGateway` into `ActivationSource.MODEL` requests and run through `AgentRuntime`.
 
 Rule: no model-facing tool may become a second runtime authority model.
 
@@ -69,36 +69,37 @@ Rule: no model-facing tool may become a second runtime authority model.
 
 Evidence is included in durable Run journal snapshots through `JournalRuntimeStore` and can be restored across store instances.
 
-Rule: do not call this an immutable audit ledger until append-only evidence semantics, corruption handling, and Android restart validation are proven.
+Rule: do not call this an immutable audit ledger until append-only evidence semantics, corruption handling, retention, and Android restart validation are proven.
 
 ### C-05 — Approval context — PROVISIONALLY VERIFIED
 
-Approval context is durable, exact-bound, and one-use. The stored authorization binds Run identity, requester identity, Action/version, input, planned invocations, and a fingerprint. Terminal approval replays return the immutable terminal Run and do not execute again. Post-approval policy re-evaluation now permits execution only for `ALLOW`; `DENY` and `APPROVAL_REQUIRED` are both non-executing outcomes.
+Approval context is durable, exact-bound, and one-use. The stored authorization binds Run identity, requester identity, Action/version, input, planned invocations, and a fingerprint. Approval replay on a terminal Run returns the stored terminal result; post-approval policy re-evaluation permits execution only for `ALLOW`.
 
-Remaining limitation: approval presentation/resumption is not yet integrated into Android UI and process-death integration is still open.
+Remaining limitation: approval presentation/resumption is not yet integrated into Android UI and process-death validation is still open.
 
-### C-06 — Effect identity and reconciliation — IMPROVED, NOT CLOSED
+### C-06 — Effect identity and reconciliation — PROVISIONALLY VERIFIED LOCALLY, NOT CLOSED EXTERNALLY
 
-Stable effect identity is backed by a durable reservation journal. A repeated effect is blocked before executor invocation, including after a new store instance reads the journal. A process-start recovery pass converts stale `RESERVED` effects into explicit `UNKNOWN` records. Reconciliation can confirm an unknown effect as completed or not executed; only the latter permits a new reservation.
+Stable effect identity is backed by a durable reservation journal. A repeated effect is blocked before executor invocation across store instances using the same journal. Process-start recovery converts stale `RESERVED` effects to explicit `UNKNOWN`. Reconciliation can confirm an unknown effect as completed or not executed; only the latter permits a new reservation.
 
-Remaining limitation: capability-specific reconciliation is not yet integrated, and Android process-death evidence is still open.
+Remaining limitation: this does not establish exactly-once external execution, and capability-specific reconciliation is not integrated.
 
 ### C-07 — Direct Action side effects — RESOLVED FOR CURRENT CORE CONTRACT
 
 The runtime no longer calls an effect-capable Action closure. `ActionDefinition.reduce` is the effect-free reduction stage; capability effects are routed through `CapabilityExecutor`.
 
-Remaining limitation: this is an API/architecture boundary, not a proof that every future executor implementation is safe. Executor adapters must preserve invocation authority and must not self-grant permissions.
+Remaining limitation: this protects the core API boundary, not the behavior of arbitrary future executor adapters.
 
 ### C-08 — Remote egress — PROVISIONALLY VERIFIED
 
-All current remote provider requests cross an injected `EgressPolicy` before HTTP execution. The current Android composition explicitly allowlists `api.anthropic.com` and the policy rejects non-HTTPS, unlisted hosts, and credentials embedded in destination URLs.
+Current remote provider requests cross an injected `EgressPolicy` before HTTP execution. The Android composition explicitly allowlists `api.anthropic.com`; policy also rejects non-HTTPS destinations, embedded destination credentials, and disallowed declared data classes.
 
-Remaining limitation: the policy currently classifies broad data categories but does not yet implement minimization/redaction or per-data-class destination policy.
+Remaining limitation: the current gate is admission/classification, not content minimization/redaction or per-data-class destination policy.
 
 ## 4. Evidence classification
 
 - **ESTABLISHED** — architectural decision explicitly accepted.
 - **PROVISIONALLY VERIFIED** — covered by deterministic automated tests but not yet real-device/integration verified.
+- **PROVISIONALLY ALIGNED** — implementation matches the semantic boundary, but proof depth is limited.
 - **PARTIAL** — implementation exists but omits required production properties.
 - **OPEN** — no implementation/evidence yet.
 - **CONFLICT** — current implementation contradicts an accepted invariant/decision.
@@ -131,7 +132,8 @@ Remaining limitation: the policy currently classifies broad data categories but 
 18. Add richer egress classification, minimization, and redaction.
 19. Add real Android/device CapabilityExecutor adapters.
 20. Move MCP from the vendor adapter to an internal protocol adapter boundary.
-21. Only then expand activation surfaces and richer Actions.
+21. Add broader Android-native activation adapters.
+22. Only then expand richer Actions, profiles, and deferred/background execution.
 
 ## 6. Non-goals
 
@@ -145,9 +147,13 @@ The runtime slice may be promoted from a vertical proof to a stable core candida
 - policy cannot be bypassed by an alternative activation path;
 - approval is distinguishable and non-replayable;
 - protected data has an explicit egress decision;
-- Run/Evidence survive process death/restart on Android;
-- effect identity has durable duplicate and reconciliation semantics;
+- Run/Evidence survive Android process death/restart with documented recovery semantics;
+- effect identity has durable duplicate and reconciliation semantics against at least one real external effect;
 - capability effects execute only through the controlled executor boundary;
 - model selection uses a provider-neutral boundary;
-- no secret is persisted in ordinary settings;
+- no secret is persisted in ordinary plaintext settings;
 - at least one Android-native activation adapter reaches the same runtime path.
+
+## 8. Current CI evidence
+
+As of 2026-09-05, merge commit `0fccaea041c9dc39a1183f44418897e43433f73a` on `main` completed workflow run `147` successfully. The workflow is configured to run JVM unit tests, assemble the debug APK, and upload the APK artifact. This is CI evidence for the merged source; it is not device-level evidence.
