@@ -2,7 +2,6 @@ package com.hicham.llmchat.runtime
 
 import java.io.InputStream
 import java.nio.ByteBuffer
-import java.nio.CharBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
@@ -35,12 +34,10 @@ object DeveloperActions {
                 listOf(
                     CapabilityInvocationSpec(
                         capabilityId = WORKSPACE_FILE_READ,
-                        scope = setOf("workspace:${input["grant_id"]}"),
                         parameters = mapOf(
                             "grant_id" to input["grant_id"].orEmpty(),
                             "path" to input["path"].orEmpty()
-                        ),
-                        idempotencyKey = "${input["grant_id"]}:${input["path"].orEmpty()}"
+                        )
                     )
                 )
             )
