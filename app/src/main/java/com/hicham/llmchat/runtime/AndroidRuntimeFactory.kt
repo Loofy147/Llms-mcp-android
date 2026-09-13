@@ -19,6 +19,7 @@ object AndroidRuntimeFactory {
         val app = context.applicationContext
         val runtimeDir = File(app.filesDir, "agent-runtime")
         runtimeDir.mkdirs()
+        val workspaceAuthority = AndroidWorkspaceAuthority(app)
 
         val capabilityExecutor = RegistryCapabilityExecutor(
             mapOf(
@@ -30,6 +31,21 @@ object AndroidRuntimeFactory {
                         output = mapOf("result" to value.toString()),
                         observations = listOf(Observation("result", value.toString()))
                     )
+                },
+                DeveloperActions.WORKSPACE_FILE_READ to { invocation ->
+                    val grantId = invocation.parameters["grant_id"].orEmpty()
+                    val path = invocation.parameters["path"].orEmpty()
+                    val resolved = workspaceAuthority.resolveDocument(
+                        grantId = grantId,
+                        relativePath = path,
+                        operation = WorkspaceOperation.READ
+                    )
+                    if (resolved.isDirectory) {
+                        throw WorkspaceAccessException("dev.file.read requires a file, not a directory")
+                    }
+                    val inputStream = app.contentResolver.openInputStream(android.net.Uri.parse(resolved.documentUri))
+                        ?: throw WorkspaceAccessException("Workspace file is unavailable")
+                    DeveloperActions.readText(inputStream, resolved.relativePath)
                 }
             )
         )
@@ -38,7 +54,7 @@ object AndroidRuntimeFactory {
         recoverOncePerProcess(runtimeStore)
 
         return AgentRuntime(
-            catalog = ActionCatalog(NativeActions.catalog()),
+            catalog = ActionCatalog(NativeActions.catalog() + DeveloperActions.catalog()),
             policy = PolicyEngine(),
             capabilityExecutor = capabilityExecutor,
             store = runtimeStore,
