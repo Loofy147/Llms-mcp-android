@@ -1,6 +1,7 @@
 package com.hicham.llmchat.runtime
 
 import android.content.Context
+import android.net.Uri
 import java.io.File
 
 /** Single application composition root for the local control plane. */
@@ -43,9 +44,24 @@ object AndroidRuntimeFactory {
                     if (resolved.isDirectory) {
                         throw WorkspaceAccessException("dev.file.read requires a file, not a directory")
                     }
-                    val inputStream = app.contentResolver.openInputStream(android.net.Uri.parse(resolved.documentUri))
+                    val inputStream = app.contentResolver.openInputStream(Uri.parse(resolved.documentUri))
                         ?: throw WorkspaceAccessException("Workspace file is unavailable")
                     DeveloperActions.readText(inputStream, resolved.relativePath)
+                },
+                DeveloperHashAction.WORKSPACE_FILE_HASH to { invocation ->
+                    val grantId = invocation.parameters["grant_id"].orEmpty()
+                    val path = invocation.parameters["path"].orEmpty()
+                    val resolved = workspaceAuthority.resolveDocument(
+                        grantId = grantId,
+                        relativePath = path,
+                        operation = WorkspaceOperation.HASH
+                    )
+                    if (resolved.isDirectory) {
+                        throw WorkspaceAccessException("dev.file.hash requires a file, not a directory")
+                    }
+                    val inputStream = app.contentResolver.openInputStream(Uri.parse(resolved.documentUri))
+                        ?: throw WorkspaceAccessException("Workspace file is unavailable")
+                    DeveloperHashAction.hash(inputStream, resolved.relativePath)
                 }
             )
         )
@@ -54,7 +70,11 @@ object AndroidRuntimeFactory {
         recoverOncePerProcess(runtimeStore)
 
         return AgentRuntime(
-            catalog = ActionCatalog(NativeActions.catalog() + DeveloperActions.catalog()),
+            catalog = ActionCatalog(
+                NativeActions.catalog() +
+                    DeveloperActions.catalog() +
+                    DeveloperHashAction.catalog()
+            ),
             policy = PolicyEngine(),
             capabilityExecutor = capabilityExecutor,
             store = runtimeStore,
