@@ -26,7 +26,11 @@ interface WorkspaceAuthority {
     fun getGrant(id: String): WorkspaceGrant?
     fun registerGrant(grant: WorkspaceGrant)
     fun revokeGrant(id: String)
-    fun resolveDocument(grantId: String, relativePath: String): ResolvedWorkspaceDocument
+    fun resolveDocument(
+        grantId: String,
+        relativePath: String,
+        operation: WorkspaceOperation
+    ): ResolvedWorkspaceDocument
 }
 
 data class ResolvedWorkspaceDocument(
