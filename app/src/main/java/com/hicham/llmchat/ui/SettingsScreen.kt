@@ -1,5 +1,7 @@
 package com.hicham.llmchat.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,13 +14,39 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import com.hicham.llmchat.model.McpServerConfig
+import com.hicham.llmchat.runtime.AndroidWorkspaceAuthority
+import com.hicham.llmchat.runtime.WorkspaceGrant
+import com.hicham.llmchat.runtime.WorkspaceOperation
+import java.util.UUID
 
 private val MODELS = listOf("claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5-20251001", "claude-fable-5")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(viewModel: ChatViewModel, onDone: () -> Unit) {
+    val context = LocalContext.current
+    val workspaceAuthority = remember(context) { AndroidWorkspaceAuthority(context) }
+    var workspaces by remember { mutableStateOf(workspaceAuthority.listGrants()) }
+
+    val workspacePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            val grant = WorkspaceGrant(
+                id = UUID.randomUUID().toString(),
+                displayName = "Workspace",
+                authority = "android.saf.tree",
+                treeUri = uri.toString(),
+                operations = setOf(WorkspaceOperation.READ, WorkspaceOperation.LIST, WorkspaceOperation.HASH),
+                grantedAtEpochMs = System.currentTimeMillis()
+            )
+            runCatching { workspaceAuthority.registerGrant(grant) }
+                .onSuccess { workspaces = workspaceAuthority.listGrants() }
+        }
+    }
+
     val settings by viewModel.settings.collectAsState()
     var apiKey by remember(settings) { mutableStateOf(settings.apiKey) }
     var model by remember(settings) { mutableStateOf(settings.model) }
@@ -96,6 +124,31 @@ fun SettingsScreen(viewModel: ChatViewModel, onDone: () -> Unit) {
                     Switch(checked = nativeTools, onCheckedChange = { nativeTools = it })
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Enable built-in tools (time, calculator)")
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+            item {
+                Text("Developer workspaces", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Grant a specific Android folder for future read-only developer capabilities. The selected folder remains the authority boundary.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                workspaces.forEach { workspace ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(workspace.displayName, style = MaterialTheme.typography.bodyMedium)
+                            Text(workspace.treeUri, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        }
+                        IconButton(onClick = {
+                            workspaceAuthority.revokeGrant(workspace.id)
+                            workspaces = workspaceAuthority.listGrants()
+                        }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Revoke workspace")
+                        }
+                    }
+                }
+                Button(onClick = { workspacePicker.launch(null) }) {
+                    Text("Add workspace")
                 }
                 Spacer(modifier = Modifier.height(16.dp))
             }
