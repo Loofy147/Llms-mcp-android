@@ -44,13 +44,14 @@ class AndroidWorkspaceAuthority(context: Context) : WorkspaceAuthority {
         writeGrants(readGrants().filterNot { it.id == id })
     }
 
-    override fun resolveDocument(grantId: String, relativePath: String): ResolvedWorkspaceDocument {
+    override fun resolveDocument(
+        grantId: String,
+        relativePath: String,
+        operation: WorkspaceOperation
+    ): ResolvedWorkspaceDocument {
         val grant = getGrant(grantId) ?: throw WorkspaceAccessException("Workspace grant not found")
-        if (WorkspaceOperation.READ !in grant.operations &&
-            WorkspaceOperation.LIST !in grant.operations &&
-            WorkspaceOperation.HASH !in grant.operations
-        ) {
-            throw WorkspaceAccessException("Workspace has no read/list/hash authority")
+        if (operation !in grant.operations) {
+            throw WorkspaceAccessException("Workspace operation is not granted: $operation")
         }
 
         val normalized = WorkspacePath.normalize(relativePath)
