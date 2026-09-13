@@ -22,9 +22,8 @@ class AndroidWorkspaceAuthority(context: Context) : WorkspaceAuthority {
 
     override fun registerGrant(grant: WorkspaceGrant) {
         val treeUri = Uri.parse(grant.treeUri)
-        val flags = ContentResolver.FLAG_GRANT_READ_URI_PERMISSION or
-            ContentResolver.FLAG_GRANT_WRITE_URI_PERMISSION
-        runCatching { resolver.takePersistableUriPermission(treeUri, flags) }
+        val readFlag = ContentResolver.FLAG_GRANT_READ_URI_PERMISSION
+        runCatching { resolver.takePersistableUriPermission(treeUri, readFlag) }
             .onFailure {
                 throw WorkspaceAccessException("Workspace permission could not be persisted")
             }
@@ -54,7 +53,7 @@ class AndroidWorkspaceAuthority(context: Context) : WorkspaceAuthority {
             throw WorkspaceAccessException("Workspace has no read/list/hash authority")
         }
 
-        val normalized = normalizeRelativePath(relativePath)
+        val normalized = WorkspacePath.normalize(relativePath)
         val treeUri = Uri.parse(grant.treeUri)
         ensurePersistedReadPermission(treeUri)
 
@@ -98,10 +97,7 @@ class AndroidWorkspaceAuthority(context: Context) : WorkspaceAuthority {
         )
         resolver.query(
             childrenUri,
-            arrayOf(
-                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME
-            ),
+            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
             "${DocumentsContract.Document.COLUMN_DISPLAY_NAME} = ?",
             arrayOf(name),
             null
@@ -136,19 +132,6 @@ class AndroidWorkspaceAuthority(context: Context) : WorkspaceAuthority {
         if (!granted) {
             throw WorkspaceAccessException("Workspace permission is unavailable or revoked")
         }
-    }
-
-    private fun normalizeRelativePath(input: String): String {
-        val normalizedSeparators = input.replace('\\', '/')
-        if (normalizedSeparators.startsWith('/') || normalizedSeparators.contains('\u0000')) {
-            throw WorkspaceAccessException("Workspace path must be relative")
-        }
-        val segments = normalizedSeparators.split('/')
-            .filter { it.isNotEmpty() }
-        if (segments.any { it == "." || it == ".." }) {
-            throw WorkspaceAccessException("Workspace path traversal is not allowed")
-        }
-        return segments.joinToString("/")
     }
 
     private fun readGrants(): List<WorkspaceGrant> {
