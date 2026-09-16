@@ -4,8 +4,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
-import android.os.DeadObjectException
 import android.os.IBinder
+import android.os.RemoteException
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
@@ -29,7 +29,7 @@ class BinderFailureInjectionTest {
             try {
                 first.execute(operationId, T2ProviderService.DIE_AFTER_EFFECT)
                 fail("Provider process should die before returning")
-            } catch (_: DeadObjectException) {
+            } catch (_: RemoteException) {
                 // Expected transport ambiguity: provider persisted the effect and then died.
             }
         } finally {
@@ -58,7 +58,7 @@ class BinderFailureInjectionTest {
             try {
                 first.execute(operationId, T2ProviderService.DIE_AFTER_RECEIVED)
                 fail("Provider process should die before returning")
-            } catch (_: DeadObjectException) {
+            } catch (_: RemoteException) {
                 // Expected.
             }
         } finally {
