@@ -76,7 +76,6 @@ class AgentRuntime(
         store.saveRun(run)
         var invocations = emptyList<CapabilityInvocation>()
         val executions = mutableListOf<CapabilityExecution>()
-        val executedInvocations = mutableListOf<CapabilityInvocation>()
 
         return try {
             invocations = materializeInvocations(run, action, request, plan.invocations)
@@ -90,10 +89,8 @@ class AgentRuntime(
                 try {
                     val execution = capabilityExecutor.execute(invocation)
                     executions += execution
-                    executedInvocations += invocation
-                    // Returning from the capability boundary establishes that this specific
-                    // invocation produced a classified executor result. Action-level verification
-                    // happens later and must not erase this per-effect fact.
+                    // A returned capability result establishes the outcome of this specific
+                    // executor boundary. Action-level verification must not erase that fact.
                     store.completeEffect(invocation.effectId)
                 } catch (e: Exception) {
                     store.markEffectUnknown(invocation.effectId)
