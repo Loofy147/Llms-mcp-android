@@ -4,7 +4,6 @@ import android.content.Context
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.nio.channels.FileChannel
 import java.util.Properties
 
 internal enum class T2OperationState {
@@ -95,7 +94,5 @@ internal class T2ProviderStore(context: Context) {
             temp.delete()
             error("Could not atomically replace ${target.absolutePath}")
         }
-
-        FileChannel.open(target.toPath()).use { channel -> channel.force(true) }
     }
 }
