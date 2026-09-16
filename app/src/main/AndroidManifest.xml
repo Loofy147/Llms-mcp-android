@@ -18,5 +18,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".runtime.t2.T2ProviderService"
+            android:exported="false"
+            android:process=":provider" />
     </application>
 </manifest>
