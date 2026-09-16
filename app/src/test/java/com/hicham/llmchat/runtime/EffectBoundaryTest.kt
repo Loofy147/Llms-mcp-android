@@ -1,6 +1,7 @@
 package com.hicham.llmchat.runtime
 
 import java.io.File
+import java.util.UUID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -41,41 +42,26 @@ class EffectBoundaryTest {
                 }
             )
         )
-        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), executor, JournalRuntimeStore(journal))
+        val store = JournalRuntimeStore(journal)
+        val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), executor, store)
 
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "two_effects"))
-        val store = JournalRuntimeStore(journal)
-        val effects = listOf("a", "b").associateWith { key ->
-            store.unknownEffects().find { it.parameters["__test_key"] == key }?.status
-        }
+        val effectA = UUID.nameUUIDFromBytes("two_effects:1:effect.a:a-1".toByteArray()).toString()
+        val effectB = UUID.nameUUIDFromBytes("two_effects:1:effect.b:b-1".toByteArray()).toString()
 
         assertEquals(RunStatus.FAILED, run.status)
         assertEquals(listOf("a", "b"), executions)
         assertTrue(run.evidence?.observations?.any { it.value == "a-completed" } == true)
 
-        // The production journal does not currently expose completed effects through a public query,
-        // so inspect the journal contract through explicit effect identities used by the test plan.
-        val actionId = action.id
-        val invocationA = CapabilityInvocation(
-            runId = run.id,
-            capabilityId = "effect.a",
-            actionId = actionId,
-            actionVersion = 1,
-            effectId = java.util.UUID.nameUUIDFromBytes("$actionId:1:effect.a:a-1".toByteArray()).toString(),
-            attributedTo = "local-user"
+        assertEquals(
+            EffectReconciliationResult.NOT_UNKNOWN,
+            store.reconcileEffect(effectA, EffectReconciliationDecision.CONFIRMED_COMPLETED)
         )
-        val invocationB = CapabilityInvocation(
-            runId = run.id,
-            capabilityId = "effect.b",
-            actionId = actionId,
-            actionVersion = 1,
-            effectId = java.util.UUID.nameUUIDFromBytes("$actionId:1:effect.b:b-1".toByteArray()).toString(),
-            attributedTo = "local-user"
+        assertEquals(1, store.unknownEffects().count { it.effectId == effectB })
+        assertEquals(
+            EffectReconciliationResult.RECONCILED,
+            store.reconcileEffect(effectB, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
         )
-
-        assertEquals(EffectReservation.REPLAY_BLOCKED, store.reserveEffects(listOf(invocationA)))
-        assertEquals(EffectReservation.REPLAY_BLOCKED, store.reserveEffects(listOf(invocationB)))
-        assertEquals(emptyMap<String, EffectStatus>(), effects.filterValues { it != null })
     }
 
     @Test
