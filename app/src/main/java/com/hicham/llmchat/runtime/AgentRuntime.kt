@@ -18,7 +18,11 @@ class AgentRuntime(
         return when (policy.evaluate(request, action)) {
             PolicyDecision.DENY -> Run(activation = request, status = RunStatus.DENIED, action = action, denialReason = "Policy denied Action").also(store::saveRun)
             PolicyDecision.APPROVAL_REQUIRED -> requestApproval(request, action)
-            PolicyDecision.ALLOW -> execute(request, action, action.plan(request.input))
+            PolicyDecision.ALLOW -> try {
+                execute(request, action, action.plan(request.input))
+            } catch (e: Exception) {
+                Run(activation = request, status = RunStatus.FAILED, action = action, denialReason = e.message ?: "Action planning failed").also(store::saveRun)
+            }
         }
     }
 
@@ -71,6 +75,9 @@ class AgentRuntime(
         val run = existingRun?.copy(status = RunStatus.RUNNING) ?: Run(activation = request, status = RunStatus.RUNNING, action = action)
         store.saveRun(run)
         var invocations = emptyList<CapabilityInvocation>()
+        val executions = mutableListOf<CapabilityExecution>()
+        val executedInvocations = mutableListOf<CapabilityInvocation>()
+
         return try {
             invocations = materializeInvocations(run, action, request, plan.invocations)
             when (store.reserveEffects(invocations)) {
@@ -78,20 +85,41 @@ class AgentRuntime(
                 EffectReservation.REPLAY_BLOCKED -> return run.copy(status = RunStatus.FAILED, denialReason = "Effect replay blocked; reconciliation required").also(store::saveRun)
                 EffectReservation.CONFLICT -> return run.copy(status = RunStatus.FAILED, denialReason = "Effect identity conflict; execution blocked").also(store::saveRun)
             }
-            val capabilityExecutions = invocations.map(capabilityExecutor::execute)
-            val execution = action.reduce(request.input, capabilityExecutions)
+
+            for (invocation in invocations) {
+                try {
+                    val execution = capabilityExecutor.execute(invocation)
+                    executions += execution
+                    executedInvocations += invocation
+                    // Returning from the capability boundary establishes that this specific
+                    // invocation produced a classified executor result. Action-level verification
+                    // happens later and must not erase this per-effect fact.
+                    store.completeEffect(invocation.effectId)
+                } catch (e: Exception) {
+                    store.markEffectUnknown(invocation.effectId)
+                    throw e
+                }
+            }
+
+            val execution = action.reduce(request.input, executions)
             val verification = Verification(execution.postcondition, if (execution.postcondition) "Postcondition satisfied" else "Postcondition failed")
-            val evidence = Evidence(run.id, action.id, action.version, request.source, request.identity, invocations, capabilityExecutions.flatMap { it.observations } + execution.observations, verification)
-            if (verification.passed) {
-                invocations.forEach { store.completeEffect(it.effectId) }
-                run.copy(status = RunStatus.SUCCEEDED, output = execution.output, evidence = evidence)
-            } else {
-                invocations.forEach { store.markEffectUnknown(it.effectId) }
-                run.copy(status = RunStatus.FAILED, output = execution.output, evidence = evidence, denialReason = verification.reason)
-            }.also(store::saveRun)
+            val evidence = Evidence(run.id, action.id, action.version, request.source, request.identity, invocations, executions.flatMap { it.observations } + execution.observations, verification)
+            run.copy(status = if (verification.passed) RunStatus.SUCCEEDED else RunStatus.FAILED, output = execution.output, evidence = evidence, denialReason = verification.reason.takeUnless { verification.passed })
+                .also(store::saveRun)
         } catch (e: Exception) {
-            invocations.forEach { store.markEffectUnknown(it.effectId) }
-            run.copy(status = RunStatus.FAILED, denialReason = e.message ?: "Action execution failed").also(store::saveRun)
+            // Preserve facts already established for earlier effects. Only the effect whose
+            // executor boundary failed is UNKNOWN; completed effects remain COMPLETED.
+            val evidence = if (executions.isEmpty()) null else Evidence(
+                run.id,
+                action.id,
+                action.version,
+                request.source,
+                request.identity,
+                invocations,
+                executions.flatMap { it.observations },
+                Verification(false, e.message ?: "Action execution failed")
+            )
+            run.copy(status = RunStatus.FAILED, evidence = evidence, denialReason = e.message ?: "Action execution failed").also(store::saveRun)
         }
     }
 
