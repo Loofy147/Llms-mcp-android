@@ -1,6 +1,6 @@
 # Android T2 Binder Failure-Injection — Execution Ledger — 2026-09-17
 
-Status: **DIAGNOSTIC EXECUTION / NO T2 PROMOTION YET**
+Status: **CASE-LEVEL EXPERIMENTALLY SUPPORTED / GENERAL T2 STILL OPEN**
 
 Purpose: preserve the evidence chain for every T2 implementation/test iteration. This ledger records why each change was made and prevents a harness failure from being promoted into a platform or semantic conclusion.
 
@@ -8,7 +8,7 @@ Purpose: preserve the evidence chain for every T2 implementation/test iteration.
 
 The experiment under test is defined in `ANDROID_T2_BINDER_FAILURE_INJECTION_SPEC_2026-09-16.md`.
 
-The current implementation deliberately remains narrow:
+The implementation deliberately remains narrow:
 
 ```text
 instrumentation caller
@@ -50,9 +50,9 @@ Observed:
 - debug APK: PASS;
 - instrumentation: FAIL.
 
-Initial interpretation was that `IllegalArgumentException: Required value was null.` from `android.os.Parcel.createExceptionOrNull(...)` was a Binder process-death manifestation.
+Initial interpretation was that `IllegalArgumentException: Required value was null.` was a Binder process-death manifestation.
 
-That interpretation is now **RETRACTED** for the failing first test, because the next diagnostic run proved that the exception happened before the injected process death.
+That interpretation is **RETRACTED** for the failing first test, because the next diagnostic run proved that the exception happened before the injected process death.
 
 ### Run #260 — broadened expected Binder-death exception handling
 
@@ -88,7 +88,7 @@ Commit: `534833c6b086f6146148c7d847745909ed4c4c62`
 
 Change:
 
-- every important Binder/test step was wrapped in a `T2_STAGE[...]` diagnostic boundary.
+- important Binder/test steps were wrapped in `T2_STAGE[...]` diagnostic boundaries.
 
 Reason:
 
@@ -101,18 +101,18 @@ T2_STAGE[initial.getEffectCount] failed:
 java.lang.IllegalArgumentException: Required value was null.
 ```
 
-This is the decisive diagnostic result.
+This established the actual harness defect.
 
 ## Root cause established
 
 **ESTABLISHED:** the failing first test queried the provider for `effectCount` before the provider had ever received the `operation_id`.
 
-`T2ProviderStore.get(operationId)` returns `null` for an unknown operation. `T2ProviderService.getEffectCount(...)` requires an existing operation before returning its count. Therefore the pre-receipt query throws before the fault-injection RPC executes.
+`T2ProviderStore.get(operationId)` returns `null` for an unknown operation, and `T2ProviderService.getEffectCount(...)` requires an existing operation. Therefore the pre-receipt query threw before the fault-injection RPC executed.
 
 Consequences:
 
-- the failing Run #259/#260 first-case exception was not evidence of Binder process-death semantics;
-- B3 (effect persisted before provider death) had not yet produced a valid recovery observation in those runs;
+- the Run #259/#260 exception was not evidence of Binder process-death semantics;
+- B3 had not yet produced a valid recovery observation in those runs;
 - promoting those runs as T2 evidence would have been incorrect.
 
 ## Corrective change
@@ -134,37 +134,140 @@ state here would test an unknown-operation error, not T2 recovery.
 
 No provider implementation change was made.
 
-## Current evidence classification
+## Valid execution evidence
 
-### Build/runtime
+### Run #262 — first clean T2 execution
 
-**ESTABLISHED:** the stage-labelled branch in Run #261 compiled and the build job passed, including unit tests and debug APK generation.
+Run ID: `35216212638`
 
-### B2 — death after durable receipt, before effect
+Commit under test: `6952b651149e0f0d533403871768e2bdc954e935`
 
-**UNRESOLVED / NOT PROMOTED.** The second instrumentation test did not appear in the failure list for Runs #259–#261, but no dedicated case-level evidence record has yet been promoted from these runs.
+Environment:
 
-### B3 — effect persisted, then provider dies before reply
+- GitHub Actions Ubuntu 24.04 runner
+- JDK 17
+- Gradle 8.9
+- Android API 35
+- Google APIs system image
+- x86_64 emulator
+- Pixel 7 Pro hardware profile
 
-**OPEN.** The pre-receipt test defect prevented a valid B3 observation. The next run is the first clean attempt at this case.
+Build result:
 
-### General T2 hypothesis
+- build job: PASS
+- unit tests: PASS
+- debug APK: PASS
+- instrumentation: PASS
+- 2 instrumentation tests executed and finished successfully
 
-**OPEN.** No claim of cross-process recoverability, exactly-once behavior, or general Binder reliability is promoted yet.
+### B2 — provider receives durable operation, dies before effect
+
+Test: `providerReceiptSurvivesDeathBeforeEffectAndCanBeExecutedAfterRecovery`
+
+Observed assertions:
+
+```text
+initial provider process instance
+    !=
+recovered provider process instance
+
+recovered state = RECEIVED
+recovered effect_count = 0
+
+retry after recovery
+    -> state = COMPLETED
+    -> effect_count = 1
+```
+
+Classification: **EXPERIMENTALLY_SUPPORTED**, limited to this modeled topology and API-35 emulator run.
+
+Meaning supported by the evidence:
+
+- the operation receipt survived provider-process loss;
+- recovery reached a new provider process instance;
+- no side effect was recorded before the injected death;
+- execution could safely continue after recovery.
+
+### B3 — effect persists, provider dies before reply
+
+Test: `effectPersistedBeforeProviderDeathIsReconciledWithoutReexecution`
+
+Observed assertions:
+
+```text
+initial provider process instance
+    !=
+recovered provider process instance
+
+recovered state = EFFECT_APPLIED
+recovered effect_count = 1
+
+reconcile
+    -> state = COMPLETED
+    -> effect_count remains 1
+```
+
+Classification: **EXPERIMENTALLY_SUPPORTED**, limited to this modeled topology and API-35 emulator run.
+
+Meaning supported by the evidence:
+
+- the durable operation record survived provider-process loss;
+- the effect was known to have been applied after recovery;
+- reconciliation completed the operation without invoking the side effect again;
+- the observed effect count remained exactly one in this experiment.
+
+## Current claim frontier
+
+### ESTABLISHED
+
+The current provider-side T2 model survives the two tested provider-process failure boundaries on the API-35 emulator:
+
+1. durable receipt before process death, with no effect yet;
+2. durable effect before process death, with the reply unavailable.
+
+The evidence is case-level, not a general Android reliability guarantee.
+
+### EXPERIMENTALLY_SUPPORTED
+
+I-T2-1 is supported for B2/B3 insofar as transport/process loss did not produce a semantic completion by itself and recovery required reading durable provider state.
+
+I-T2-2 is supported for B3 in the tested path: reconciliation preceded completion and the effect count remained one.
+
+I-T2-3 is supported for B2/B3: a known operation could be recovered after the provider process instance changed.
+
+I-T2-4 is supported for these cases because the provider retained the effect state/count needed to distinguish RECEIVED from EFFECT_APPLIED.
+
+I-T2-6 is supported narrowly by the cross-process observation: the tested recovery path did not depend on an in-process lock to prevent duplicate effect application.
+
+### OPEN / NOT TESTED
+
+The following remain open:
+
+- B1 provider unavailable before dispatch
+- B4 caller dies after provider completion but before caller-side durable completion
+- B5 caller dies before dispatch
+- B6 concurrent duplicate recovery
+- B7 stale callback/result ordering
+- I-T2-5 stale-result rejection
+- caller-side durable `UNKNOWN_OUTCOME` persistence and recovery
+- caller/provider end-to-end reconciliation through `AgentRuntime`
+- cross-package authorization/discovery
+- reboot/force-stop/update behavior
+- power-loss durability
+- exactly-once semantics as a general guarantee
 
 ## Why we do not broaden the architecture now
 
-The failure was localized to the experiment harness, not the domain model or durable provider store. Introducing Room, WorkManager, a new provider package, or additional abstractions would add variables while the current fault boundary is still unresolved.
+The clean B2/B3 result validates only the narrow provider-process failure boundary. The unresolved cases concern different ownership or lifecycle boundaries and should be isolated in separate experiments.
 
-The correct next move is therefore another focused T2 run against commit `6952b651149e0f0d533403871768e2bdc954e935`.
+Therefore:
 
-## Promotion gate after the next run
+- do not add WorkManager as domain truth;
+- do not add Room merely to “make it durable”;
+- do not generalize the provider contract yet;
+- do not promote exactly-once;
+- do not move to T3 until the remaining caller-side and concurrency questions are explicitly scoped.
 
-Only after a clean run:
+## Next gate
 
-1. record the exact emulator/API/build context;
-2. record B2 and B3 observations separately;
-3. map each observation to the applicable T2 invariant;
-4. update the T2 specification with case-level evidence;
-5. keep unsupported B6/B7/B4/B5 claims explicitly OPEN;
-6. only then decide whether T3 is justified.
+The next engineering step is a targeted review of B4/B5/B6/B7 and the caller-side `UNKNOWN_OUTCOME` boundary. T3 should only start after that review establishes which remaining invariants require a new experiment rather than a change to the existing T2 model.
