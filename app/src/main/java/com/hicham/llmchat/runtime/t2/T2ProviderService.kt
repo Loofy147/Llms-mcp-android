@@ -14,7 +14,7 @@ class T2ProviderService : Service() {
     }
 
     private lateinit var store: T2ProviderStore
-    private val processInstanceId = UUID.randomUUID().toString()
+    private val providerProcessInstanceId = UUID.randomUUID().toString()
 
     override fun onCreate() {
         super.onCreate()
@@ -59,6 +59,6 @@ class T2ProviderService : Service() {
 
         override fun getPid(): Int = Process.myPid()
 
-        override fun getProcessInstanceId(): String = processInstanceId
+        override fun getProcessInstanceId(): String = providerProcessInstanceId
     }
 }
