@@ -102,6 +102,9 @@ Model      = optional reasoning component
 | I-17 | Policy authorization, human approval, automated risk signals, model reasoning, and user preferences are separate concepts. | ACCEPTED |
 | I-18 | A remote/protocol adapter cannot become canonical authority merely because it defines its own authentication or lifecycle semantics. | ACCEPTED |
 | I-19 | Durable event history, where required, must not be confused with live streaming previews. | TARGET INVARIANT / OPEN IMPLEMENTATION |
+| I-20 | Credential possession, credential use, and execution authorization are separate concerns. | ACCEPTED |
+| I-21 | Egress authorization should be attributable to the data lineage and destination when a capability depends on protected/user-derived data. | TARGET INVARIANT / OPEN PROOF |
+| I-22 | Browser or UI automation must expose a bounded broker/capability surface rather than unrestricted host/browser authority. | TARGET INVARIANT / FUTURE CAPABILITY |
 
 ## Product policies
 
@@ -126,6 +129,7 @@ Model      = optional reasoning component
 | T-07 | WorkManager | Candidate for supported persistent/deferred background work. |
 | T-08 | CredentialRef/protected resolver | Candidate local security primitive; implementation deferred until a boundary test specifies secret-flow invariants. |
 | T-09 | Durable execution event log | Candidate semantic primitive only if B4-B7 demonstrate that Run/Effect state alone is insufficient. |
+| T-10 | Execution-environment containment | Capability-specific choice; do not mandate a VM/sandbox globally before measured need. |
 
 ## Required experiments
 
@@ -149,6 +153,7 @@ Model      = optional reasoning component
 | E-16 | Provenance-aware egress. | Egress decisions remain correct when the same data class originates from different sources/flows and when credentials are bound to different destinations. |
 | E-17 | Minimal event sufficiency. | Determine whether B4-B7 can be represented using Run/Effect state alone; introduce event history only for an empirically demonstrated missing semantic. |
 | E-18 | High-power capability containment. | Demonstrate that filesystem/network/environment boundaries still cap blast radius when policy/model-layer assumptions fail. |
+| E-19 | Browser capability broker. | A bounded browser surface enforces capability scope, credential entry isolation, takeover, and egress policy without unrestricted browser authority. |
 
 ## Research-derived capability experiments
 
@@ -200,26 +205,47 @@ The full proposal and verification dimensions are documented in `PERSONAL_DEVELO
 | R-10 | Treat model-compressed observations or model-generated risk ratings as authoritative evidence. | Compression and analysis are derived reasoning artifacts; authoritative evidence must remain attributable to observations/artifacts/verification. |
 | R-11 | Add a general VM/sandbox to the Android core solely because external agent platforms use one. | Environment containment is a valid security layer, but current target capabilities do not justify the complexity before T2 recovery and capability-risk evidence. |
 | R-12 | Treat a probabilistic risk classifier as the final authorization boundary. | External evidence shows non-zero miss rates; deterministic local authorization remains authoritative. |
+| R-13 | Reproduce Meta's kernel/eBPF taint implementation in Android without a demonstrated platform-specific requirement. | The reusable principle is provenance-aware egress, not a vendor-specific mechanism. |
 
 ## External reference synchronization
 
-The detailed Anthropic review is recorded in:
+### Anthropic
+
+Detailed records:
 
 - `docs/architecture/ANTHROPIC_REFERENCE_REVIEW_2026-09-17.md`
 - `docs/architecture/ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
+- `docs/security/ANTHROPIC_SECURITY_SYNC_2026-09-17.md`
 
-External evidence changed the research frontier but did not silently promote implementations. The immediate sequence remains:
+### Meta Muse
+
+Detailed records:
+
+- `docs/architecture/MUSE_REFERENCE_REVIEW_2026-09-17.md`
+- `docs/architecture/MUSE_ADOPTION_DELTAS_2026-09-17.md`
+- `docs/security/MUSE_SECURITY_SYNC_2026-09-17.md`
+
+Muse and Anthropic strengthen the same architectural frontier rather than replacing the current model:
 
 ```text
-B4/B5 caller-side recovery
-    -> B6 concurrency
-    -> B7 stale results
-    -> credential-use isolation
-    -> provenance-aware egress
-    -> event-log decision
-    -> native MCP re-audit
-    -> higher-power execution containment
+Model / reasoning
+    != authority
+
+Policy
+    != human approval
+    != risk classifier
+
+CredentialRef
+    != credential value
+
+Process / sandbox
+    != durable semantic identity
+
+MCP / external protocol
+    != canonical domain model
 ```
+
+The external reviews change research priorities but do not upgrade local claims. Current implementation status remains determined by repository code and executed evidence.
 
 ## Change control
 
