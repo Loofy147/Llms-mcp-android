@@ -28,5 +28,15 @@
             android:name=".runtime.t2.T2CallerService"
             android:exported="false"
             android:process=":caller" />
+
+        <service
+            android:name=".runtime.t2.T2CallerServiceA"
+            android:exported="false"
+            android:process=":callerA" />
+
+        <service
+            android:name=".runtime.t2.T2CallerServiceB"
+            android:exported="false"
+            android:process=":callerB" />
     </application>
 </manifest>
