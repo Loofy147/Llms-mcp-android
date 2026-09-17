@@ -24,76 +24,112 @@ class BinderFailureInjectionTest {
     @Test
     fun effectPersistedBeforeProviderDeathIsReconciledWithoutReexecution() {
         val operationId = "t2-${UUID.randomUUID()}"
-        val first = bind()
-        val firstProcessInstance = first.getProcessInstanceId()
+        val first = stage("bind.initial") { bind() }
+        val firstProcessInstance = stage("initial.getProcessInstanceId") {
+            first.getProcessInstanceId()
+        }
         try {
-            assertEquals(0, first.getEffectCount(operationId))
-            expectProviderDeath {
+            stage("initial.getEffectCount") {
+                assertEquals(0, first.getEffectCount(operationId))
+            }
+            expectProviderDeath("execute.DIE_AFTER_EFFECT") {
                 first.execute(operationId, T2ProviderService.DIE_AFTER_EFFECT)
             }
         } finally {
-            unbind()
+            stage("unbind.after_provider_death") { unbind() }
         }
 
-        val recovered = bind()
+        val recovered = stage("bind.recovered") { bind() }
         try {
-            assertNotEquals(
-                "Recovery must bind to a new provider process instance",
-                firstProcessInstance,
-                recovered.getProcessInstanceId(),
-            )
-            assertEquals(T2OperationState.EFFECT_APPLIED.name, recovered.getState(operationId))
-            assertEquals(1, recovered.getEffectCount(operationId))
+            val recoveredProcessInstance = stage("recovered.getProcessInstanceId") {
+                recovered.getProcessInstanceId()
+            }
+            stage("recovered.process_instance_changed") {
+                assertNotEquals(
+                    "Recovery must bind to a new provider process instance",
+                    firstProcessInstance,
+                    recoveredProcessInstance,
+                )
+            }
+            stage("recovered.getState.effect_applied") {
+                assertEquals(T2OperationState.EFFECT_APPLIED.name, recovered.getState(operationId))
+            }
+            stage("recovered.getEffectCount.before_reconcile") {
+                assertEquals(1, recovered.getEffectCount(operationId))
+            }
 
-            recovered.reconcile(operationId)
+            stage("recovered.reconcile") {
+                recovered.reconcile(operationId)
+            }
 
-            assertEquals(T2OperationState.COMPLETED.name, recovered.getState(operationId))
-            assertEquals(
-                "Reconciliation must not execute the effect again",
-                1,
-                recovered.getEffectCount(operationId),
-            )
+            stage("recovered.getState.completed") {
+                assertEquals(T2OperationState.COMPLETED.name, recovered.getState(operationId))
+            }
+            stage("recovered.getEffectCount.after_reconcile") {
+                assertEquals(
+                    "Reconciliation must not execute the effect again",
+                    1,
+                    recovered.getEffectCount(operationId),
+                )
+            }
         } finally {
-            unbind()
+            stage("unbind.after_recovery") { unbind() }
         }
     }
 
     @Test
     fun providerReceiptSurvivesDeathBeforeEffectAndCanBeExecutedAfterRecovery() {
         val operationId = "t2-${UUID.randomUUID()}"
-        val first = bind()
-        val firstProcessInstance = first.getProcessInstanceId()
+        val first = stage("bind.initial") { bind() }
+        val firstProcessInstance = stage("initial.getProcessInstanceId") {
+            first.getProcessInstanceId()
+        }
         try {
-            expectProviderDeath {
+            expectProviderDeath("execute.DIE_AFTER_RECEIVED") {
                 first.execute(operationId, T2ProviderService.DIE_AFTER_RECEIVED)
             }
         } finally {
-            unbind()
+            stage("unbind.after_provider_death") { unbind() }
         }
 
-        val recovered = bind()
+        val recovered = stage("bind.recovered") { bind() }
         try {
-            assertNotEquals(
-                "Recovery must bind to a new provider process instance",
-                firstProcessInstance,
-                recovered.getProcessInstanceId(),
-            )
-            assertEquals(T2OperationState.RECEIVED.name, recovered.getState(operationId))
-            assertEquals(0, recovered.getEffectCount(operationId))
+            val recoveredProcessInstance = stage("recovered.getProcessInstanceId") {
+                recovered.getProcessInstanceId()
+            }
+            stage("recovered.process_instance_changed") {
+                assertNotEquals(
+                    "Recovery must bind to a new provider process instance",
+                    firstProcessInstance,
+                    recoveredProcessInstance,
+                )
+            }
+            stage("recovered.getState.received") {
+                assertEquals(T2OperationState.RECEIVED.name, recovered.getState(operationId))
+            }
+            stage("recovered.getEffectCount.before_retry") {
+                assertEquals(0, recovered.getEffectCount(operationId))
+            }
 
-            recovered.execute(operationId, T2ProviderService.NO_FAILURE)
+            stage("recovered.execute.NO_FAILURE") {
+                recovered.execute(operationId, T2ProviderService.NO_FAILURE)
+            }
 
-            assertEquals(T2OperationState.COMPLETED.name, recovered.getState(operationId))
-            assertEquals(1, recovered.getEffectCount(operationId))
+            stage("recovered.getState.completed") {
+                assertEquals(T2OperationState.COMPLETED.name, recovered.getState(operationId))
+            }
+            stage("recovered.getEffectCount.after_execute") {
+                assertEquals(1, recovered.getEffectCount(operationId))
+            }
         } finally {
-            unbind()
+            stage("unbind.after_recovery") { unbind() }
         }
     }
 
-    private fun expectProviderDeath(block: () -> Unit) {
+    private fun expectProviderDeath(stage: String, block: () -> Unit) {
         try {
             block()
-            fail("Provider process should die before returning")
+            fail("[$stage] Provider process should die before returning")
         } catch (_: RemoteException) {
             // Expected transport ambiguity: the provider process died mid-RPC.
         } catch (error: IllegalArgumentException) {
@@ -101,7 +137,19 @@ class BinderFailureInjectionTest {
             // synchronous reply has been observed as this Parcel null-message
             // decoding failure instead of RemoteException. Treat only this exact
             // platform transport signature as the expected death manifestation.
+            assertEquals("[$stage] unexpected Binder exception", "[$stage] unexpected Binder exception")
             assertEquals("Required value was null.", error.message)
+        }
+    }
+
+    private fun <T> stage(name: String, block: () -> T): T {
+        return try {
+            block()
+        } catch (error: Throwable) {
+            throw AssertionError(
+                "T2_STAGE[$name] failed: ${error::class.java.name}: ${error.message}",
+                error,
+            )
         }
     }
 
