@@ -16,7 +16,6 @@ class T2CallerService : Service() {
         const val NO_FAILURE = 0
         const val DIE_BEFORE_DISPATCH = 1
         const val DIE_AFTER_PROVIDER_REPLY_BEFORE_COMPLETE = 2
-        const val PROVIDER_COMPLETED = T2ProviderService.T2OperationStateCompleted
     }
 
     private lateinit var store: T2CallerStore
@@ -42,7 +41,7 @@ class T2CallerService : Service() {
             try {
                 provider.execute(operationId, T2ProviderService.NO_FAILURE)
             } finally {
-                unbindProvider(provider)
+                unbindProvider()
             }
 
             if (faultMode == DIE_AFTER_PROVIDER_REPLY_BEFORE_COMPLETE) {
@@ -61,7 +60,8 @@ class T2CallerService : Service() {
 
             val provider = bindProvider()
             try {
-                when (provider.lookupState(operationId)) {
+                val providerState = provider.lookupState(operationId)
+                when (providerState) {
                     T2ProviderService.ABSENT -> {
                         store.markKnownNotExecuted(operationId)
                         provider.execute(operationId, T2ProviderService.NO_FAILURE)
@@ -78,10 +78,10 @@ class T2CallerService : Service() {
                     T2OperationState.COMPLETED.name -> {
                         store.markCompleted(operationId)
                     }
-                    else -> error("Unknown provider state for ${current.state}: ${provider.lookupState(operationId)}")
+                    else -> error("Unknown provider state for ${current.state}: $providerState")
                 }
             } finally {
-                unbindProvider(provider)
+                unbindProvider()
             }
         }
 
@@ -132,10 +132,9 @@ class T2CallerService : Service() {
         return checkNotNull(provider) { "Provider binder missing after connection" }
     }
 
-    private fun unbindProvider(provider: IT2Provider) {
-        if (providerConnection != null) {
-            runCatching { unbindService(providerConnection) }
-            providerConnection = null
-        }
+    private fun unbindProvider() {
+        val current = providerConnection ?: return
+        runCatching { unbindService(current) }
+        providerConnection = null
     }
 }
