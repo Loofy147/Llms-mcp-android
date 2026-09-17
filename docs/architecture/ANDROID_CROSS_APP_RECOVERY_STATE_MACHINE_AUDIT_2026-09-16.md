@@ -41,7 +41,7 @@ The durable source of truth remains the domain operation record.
 
 ## 2. WorkManager retry is not semantic retry
 
-**ESTABLISHED:** WorkManager workers can return `Result.retry()`, after which WorkManager reschedules the work using the configured backoff policy. Execution timing is inexact and affected by constraints/system optimization. citeturn817159search2turn817159search4
+**ESTABLISHED:** WorkManager workers can return `Result.retry()`, after which WorkManager reschedules the work using the configured backoff policy. Execution timing is inexact and affected by constraints/system optimization.
 
 **INFERENCE:**
 
@@ -194,7 +194,7 @@ provider missing
 
 ## 7. Force-stop and stopped state
 
-**ESTABLISHED:** Android 15 keeps a package in the stopped state until a direct or indirect user action removes it. Android 15 also cancels pending intents when the package enters the stopped state; when the stopped state is removed, `ACTION_BOOT_COMPLETED` is delivered to provide an opportunity to re-register pending intents. `ApplicationStartInfo.wasForceStopped()` can report whether the app was force-stopped. citeturn427557search1
+**ESTABLISHED:** Android 15 keeps a package in the stopped state until a direct or indirect user action removes it. Android 15 also cancels pending intents when the package enters the stopped state; when the stopped state is removed, `ACTION_BOOT_COMPLETED` is delivered to provide an opportunity to re-register pending intents. `ApplicationStartInfo.wasForceStopped()` can report whether the app was force-stopped.
 
 **INFERENCE:**
 
@@ -214,7 +214,7 @@ The recovery subsystem must respect the user's explicit stop boundary.
 
 ## 8. ContentProvider boundary
 
-**ESTABLISHED:** remote ContentProvider calls execute through Binder/provider threads; slow provider queries can trigger provider ANRs, and concurrent blocking Binder calls can exhaust provider Binder threads. citeturn427557search2turn427557search9
+**ESTABLISHED:** remote ContentProvider calls execute through Binder/provider threads; slow provider queries can trigger provider ANRs, and concurrent blocking Binder calls can exhaust provider Binder threads.
 
 **INFERENCE:** a provider query should be treated as a bounded request/response boundary.
 
@@ -238,7 +238,7 @@ This pattern also gives the orchestrator a place to reconcile UNKNOWN outcomes.
 
 ## 9. URI grants are capability state, not artifact truth
 
-**ESTABLISHED:** AppFunction URI grants can carry read/write and optional persistable flags; Android's framework AppFunction API documents that ordinary grants typically last until reboot, while persistent access requires the persistable mechanism and receiver action. The owning provider must allow URI grants. citeturn427557search5turn427557search0
+**ESTABLISHED:** AppFunction URI grants can carry read/write and optional persistable flags; ordinary grants have explicit lifetime semantics, while persistent access requires the persistable mechanism and receiver action. The owning provider must allow URI grants.
 
 **INFERENCE:**
 
@@ -365,7 +365,7 @@ compatibility policy
 
 **HYPOTHESIS:** this contract is sufficient to let our orchestrator treat third-party Android apps as replaceable capability providers without importing their internal architecture.
 
-The hypothesis requires E1–E10 device experiments and at least one real provider implementation.
+The hypothesis requires later device experiments and at least one real provider implementation.
 
 ## 14. Test ladder
 
@@ -373,39 +373,41 @@ The hypothesis requires E1–E10 device experiments and at least one real provid
 
 No Android dependency.
 
-Inject events:
+### T1 — local Android durable-state/restart proof
+
+Use the existing durable runtime store and process-restart harness. Do not introduce Room merely to satisfy this ladder; SQLite/Room remains a separate implementation choice unless required by evidence.
+
+### T2 — Binder cross-process failure injection
+
+**CASE-LEVEL EXPERIMENTALLY_SUPPORTED:** B2 and B3 have now been exercised on an API-35 Google APIs x86_64 emulator using a Pixel 7 Pro profile. The test provider runs in a separate process of the same installed application.
+
+Supported cases:
 
 ```text
-DISPATCHED
-REPLY_LOST
-PROCESS_DIED
-PROVIDER_MISSING
-PACKAGE_UPDATED
-PERMISSION_REVOKED
-USER_STOPPED
-RECONCILIATION_SUCCESS
-RECONCILIATION_FAILURE
+B2 — durable receipt, provider process loss before effect
+B3 — durable effect, provider process loss before reply, explicit reconciliation
 ```
 
-Verify deterministic state transitions and absence of duplicate side-effect attempts.
+Still open at T2:
 
-### T1 — local Android same-process simulation
+```text
+B1, B4, B5, B6, B7
+caller-side durable UNKNOWN_OUTCOME
+stale callback rejection
+concurrent recovery ownership
+```
 
-Persist the state machine using Room/SQLite and kill/restart the process between transitions.
+### T3 — distinct provider package/application
 
-### T2 — Binder cross-process provider
+Test package discovery, authorization, provider identity/version changes, and cross-package reconciliation.
 
-Introduce an explicit provider process and terminate it at each critical boundary.
+### T4 — WorkManager scheduling adapter
 
-### T3 — ContentProvider/AppFunction provider
+Add only after the semantic recovery boundary is sufficiently established. WorkManager schedules attempts; it does not become domain truth.
 
-Test reference transfer, URI grants, provider restart, and package replacement.
+### T5 — reboot / force-stop / package-update matrix
 
-### T4 — reboot/update/force-stop matrix
-
-Run across at least two Android API generations used by the product.
-
-Record actual device/API/build/provider versions with every result.
+Run across the API/device matrix used by the product.
 
 ## 15. Evidence record format
 
@@ -434,7 +436,7 @@ No device result should be generalized beyond the tested matrix without an expli
 
 ## 16. Current conclusions
 
-**ESTABLISHED:** Android gives us strong scheduling, IPC, package, permission, URI, and lifecycle mechanisms, but those mechanisms expose different scopes and failure semantics. citeturn817159search2turn427557search1turn427557search2turn427557search5
+**ESTABLISHED:** Android gives us strong scheduling, IPC, package, permission, URI, and lifecycle mechanisms, but those mechanisms expose different scopes and failure semantics.
 
 **INFERENCE:** the correct architecture is not a large custom Android runtime manager. It is a small durable semantic state machine whose execution adapters delegate to Android-native mechanisms.
 
@@ -442,26 +444,28 @@ No device result should be generalized beyond the tested matrix without an expli
 
 **HYPOTHESIS:** if `operation_id`, capability versioning, durable checkpoints, artifact identity, and provider reconciliation are enforced, multi-app Android workflows can become resumable without treating apps as microservices or processes as durable actors.
 
-## 17. Next discriminating implementation step
+## 17. Post-T2 synchronization note — 2026-09-17
 
-Before adding more abstractions, build the smallest end-to-end vertical slice:
+Run #262 established provider-side B2/B3 behavior on the documented API-35 emulator topology. That result supersedes the pre-implementation assumption that real Android process-death evidence was entirely absent, but it does not close the caller-side recovery, concurrency, stale-result, reboot, force-stop, or package-update boundaries.
+
+The pre-T2 portions of this document remain as the historical architecture audit. Current implementation direction is now:
 
 ```text
-Room Operation
-    ↓
-WorkManager Worker
-    ↓
-Cross-process provider
-    ↓
-operation_id
-    ↓
-side effect + durable result
-    ↓
-forced process loss at ambiguous boundary
-    ↓
-reconcile
-    ↓
-resume/commit without duplicate effect
+existing durable runtime semantics
+        ↓
+real Binder/provider failure evidence (B2/B3)
+        ↓
+caller-side UNKNOWN/recovery + concurrency/stale-result experiments
+        ↓
+distinct provider package / authorization (T3)
+        ↓
+WorkManager scheduling adapter
+        ↓
+reboot / force-stop / update matrix
 ```
 
-This single slice should be capable of falsifying the central architecture before broader AppFunction/SAF/BlobStore integrations are implemented.
+The project must not promote the B2/B3 provider result into a general exactly-once or Android reliability guarantee.
+
+## 18. Current next gate
+
+The next discriminating work is B4/B5/B6/B7 and caller-side `UNKNOWN_OUTCOME` handling. T3 is deferred until those cases are explicitly scoped and the project can identify which remaining invariants require new experiments versus domain/runtime changes.
