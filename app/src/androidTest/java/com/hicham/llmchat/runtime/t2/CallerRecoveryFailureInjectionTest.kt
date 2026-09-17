@@ -54,6 +54,13 @@ class CallerRecoveryFailureInjectionTest {
                     recoveredCaller.getProcessInstanceId(),
                 )
             }
+            stage("b5.durable_checkpoint") {
+                assertEquals(
+                    "Caller must recover the pre-dispatch checkpoint written before process death",
+                    T2CallerState.DISPATCH_RESERVED.name,
+                    recoveredCaller.getState(operationId),
+                )
+            }
 
             stage("b5.recover") { recoveredCaller.recover(operationId) }
 
@@ -114,6 +121,13 @@ class CallerRecoveryFailureInjectionTest {
                     "Recovery must bind to a new caller process instance",
                     initialCallerInstance,
                     recoveredCaller.getProcessInstanceId(),
+                )
+            }
+            stage("b4.durable_checkpoint") {
+                assertEquals(
+                    "Caller must recover the dispatch checkpoint written before provider invocation",
+                    T2CallerState.DISPATCHING.name,
+                    recoveredCaller.getState(operationId),
                 )
             }
 
