@@ -81,8 +81,4 @@ jobs:
           profile: pixel_7_pro
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
-          script: |
-            SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -name sdkmanager -type f | head -n 1)"
-            test -x "$SDKMANAGER"
-            "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-            gradle connectedDebugAndroidTest --stacktrace
+          script: gradle connectedDebugAndroidTest --stacktrace
