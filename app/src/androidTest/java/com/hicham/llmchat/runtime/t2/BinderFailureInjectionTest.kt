@@ -9,6 +9,7 @@ import android.os.RemoteException
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,9 +22,10 @@ class BinderFailureInjectionTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @Test
-    fun effectPersistedBeforeProviderDeathAndDuplicateRecoveryDoesNotReapply() {
+    fun effectPersistedBeforeProviderDeathIsReconciledWithoutReexecution() {
         val operationId = "t2-${UUID.randomUUID()}"
         val first = bind()
+        val firstProcessInstance = first.getProcessInstanceId()
         try {
             assertEquals(0, first.getEffectCount(operationId))
             try {
@@ -38,28 +40,38 @@ class BinderFailureInjectionTest {
 
         val recovered = bind()
         try {
+            assertNotEquals(
+                "Recovery must bind to a new provider process instance",
+                firstProcessInstance,
+                recovered.getProcessInstanceId(),
+            )
             assertEquals(T2OperationState.EFFECT_APPLIED.name, recovered.getState(operationId))
             assertEquals(1, recovered.getEffectCount(operationId))
 
-            recovered.execute(operationId, T2ProviderService.NO_FAILURE)
+            recovered.reconcile(operationId)
 
             assertEquals(T2OperationState.COMPLETED.name, recovered.getState(operationId))
-            assertEquals("Recovery must reconcile, not re-apply, the effect", 1, recovered.getEffectCount(operationId))
+            assertEquals(
+                "Reconciliation must not execute the effect again",
+                1,
+                recovered.getEffectCount(operationId),
+            )
         } finally {
             unbind()
         }
     }
 
     @Test
-    fun providerReceiptSurvivesDeathBeforeEffect() {
+    fun providerReceiptSurvivesDeathBeforeEffectAndCanBeExecutedAfterRecovery() {
         val operationId = "t2-${UUID.randomUUID()}"
         val first = bind()
+        val firstProcessInstance = first.getProcessInstanceId()
         try {
             try {
                 first.execute(operationId, T2ProviderService.DIE_AFTER_RECEIVED)
                 fail("Provider process should die before returning")
             } catch (_: RemoteException) {
-                // Expected.
+                // Expected transport ambiguity before the side effect.
             }
         } finally {
             unbind()
@@ -67,6 +79,11 @@ class BinderFailureInjectionTest {
 
         val recovered = bind()
         try {
+            assertNotEquals(
+                "Recovery must bind to a new provider process instance",
+                firstProcessInstance,
+                recovered.getProcessInstanceId(),
+            )
             assertEquals(T2OperationState.RECEIVED.name, recovered.getState(operationId))
             assertEquals(0, recovered.getEffectCount(operationId))
 
