@@ -16,7 +16,7 @@ Reference commit: `0fccaea041c9dc39a1183f44418897e43433f73a`
 
 CI on the merged commit completed successfully on 2026-09-05. This confirms the repository's JVM tests, debug APK build, and artifact upload pipeline; it does not constitute real-device or production evidence.
 
-For the detailed post-merge state, see `docs/architecture/CURRENT_STATE_AUDIT_2026-09-05.md`.
+For the detailed post-merge state, see `docs/architecture/CURRENT_STATE_AUDIT_2026-09-05.md` and the current `docs/architecture/ARCHITECTURE_STATE_SYNC_2026-09-17.md`.
 
 ## Canonical execution model
 
@@ -42,6 +42,7 @@ The model may reason and request a tool, but a model response never authorizes a
 - `docs/architecture/NORTH_STAR_ARCHITECTURE_v0.2.md`
 - `docs/architecture/IMPLEMENTATION_RECONCILIATION_v0.2.md`
 - `docs/architecture/CURRENT_STATE_AUDIT_2026-09-05.md`
+- `docs/architecture/ARCHITECTURE_STATE_SYNC_2026-09-17.md`
 - `docs/architecture/WHOLE_APP_UNIFICATION_v0.1.md`
 - `docs/architecture/DECISION_REGISTER_v0.2.md`
 - `docs/architecture/ASSUMPTION_REGISTER_v0.2.md`
@@ -50,6 +51,8 @@ The model may reason and request a tool, but a model response never authorizes a
 - `docs/architecture/CAPABILITY_EXECUTOR_BOUNDARY_v0.1.md`
 - `docs/architecture/DURABLE_RUNTIME_GATE_v0.1.md`
 - `docs/architecture/ECOSYSTEM_RESEARCH_2026-09.md`
+- `docs/architecture/ANTHROPIC_REFERENCE_REVIEW_2026-09-17.md`
+- `docs/architecture/ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
 - `docs/security/PRIVACY_SECURITY_INVARIANTS_v0.2.md`
 
 ## Current implementation
@@ -99,6 +102,15 @@ This is an admission/classification boundary, not yet a complete data-minimizati
 
 Credentials are isolated behind a Keystore-backed `CredentialStore`; ordinary settings do not persist plaintext API/MCP credentials. Legacy API-key migration and MCP credential cleanup are implemented.
 
+## External architecture synchronization
+
+The 2026-09-17 Anthropic review is recorded as external evidence, not as an implementation requirement. The compact adoption bridge identifies what the review changes locally and what remains open:
+
+- `docs/architecture/ANTHROPIC_REFERENCE_REVIEW_2026-09-17.md`
+- `docs/architecture/ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
+
+The main extracted deltas are credential-use isolation (`CredentialRef`), provenance-aware egress, caller-side durable recovery, conditional durable execution events, environment containment for high-power capabilities, and a current-version MCP authorization/lifecycle re-audit. None is considered implemented merely because Anthropic documents it.
+
 ## Important boundaries that remain open
 
 The project is still a vertical proof rather than a production-ready autonomous runtime.
@@ -108,9 +120,11 @@ Open engineering gates include:
 - Android process-death/restart integration evidence;
 - Android approval presentation/resumption;
 - capability-specific reconciliation against real external systems;
+- caller-side durable `UNKNOWN_OUTCOME`, concurrency recovery, and stale-result ordering;
 - complete content minimization/redaction and finer-grained egress policy;
+- credential-use isolation beyond protected storage;
 - immutable/tamper-evident audit semantics;
-- native internal MCP adapter extraction;
+- native internal MCP adapter extraction and current-protocol security re-audit;
 - real Android/device CapabilityExecutor adapters beyond the current deterministic built-ins;
 - broader Android-native activation surfaces;
 - production profile/policy management;
