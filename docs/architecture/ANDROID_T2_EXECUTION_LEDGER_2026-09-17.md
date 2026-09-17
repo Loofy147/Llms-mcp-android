@@ -271,3 +271,114 @@ Therefore:
 ## Next gate
 
 The next engineering step is a targeted review of B4/B5/B6/B7 and the caller-side `UNKNOWN_OUTCOME` boundary. T3 should only start after that review establishes which remaining invariants require a new experiment rather than a change to the existing T2 model.
+
+## Run #281 — caller-side B4/B5 recovery execution
+
+Run ID: `35220752022`
+
+Commit under test: `912fe77914b69ca12b84e01d4428693a366184f8`
+
+Environment:
+
+- GitHub Actions Ubuntu 24.04 runner
+- JDK 17
+- Gradle 8.9
+- Android API 35
+- Google APIs system image
+- x86_64 emulator
+- Pixel 7 Pro hardware profile
+
+Build/result:
+
+```text
+build job                 PASS
+unit tests                PASS
+debug APK                 PASS
+instrumentation tests     PASS
+instrumentation cases    4/4
+failed                     0
+skipped                    0
+```
+
+The four cases include the two previously established B2/B3 tests plus the new caller-side B4/B5 tests.
+
+### B5 — caller dies before dispatch
+
+Test: `callerDiesBeforeDispatchAndRecoveryUsesExplicitProviderAbsence`
+
+Observed:
+
+```text
+provider lookup before caller dispatch = ABSENT
+caller process instance A
+    !=
+recovered caller process instance C
+
+recovery
+    -> provider ABSENT
+    -> one safe dispatch using the same operation identity
+    -> caller = COMPLETED
+    -> provider = COMPLETED
+    -> effect_count = 1
+```
+
+The caller store persists `DISPATCH_RESERVED` before the injected caller-process death and reloads that operation record after restart. The provider's explicit `ABSENT` lookup is used as the evidence permitting dispatch; absence is not inferred from a Binder exception.
+
+Classification: **EXPERIMENTALLY_SUPPORTED**, case-level and limited to the tested same-package API-35 emulator topology.
+
+### B4 — caller dies after provider completion but before local completion persistence
+
+Test: `callerDiesAfterProviderCompletionAndReconciliationDoesNotDuplicateEffect`
+
+Observed:
+
+```text
+provider = COMPLETED before caller recovery
+provider effect_count = 1
+caller process instance A
+    !=
+recovered caller process instance C
+
+recovery
+    -> provider state = COMPLETED
+    -> caller = COMPLETED
+    -> provider effect_count remains 1
+```
+
+The caller store persists the pre-dispatch and dispatching checkpoints before the provider RPC. The injected caller death occurs after the provider reply but before local `COMPLETED` persistence. Recovery then marks the loaded operation `UNKNOWN_OUTCOME`, reconciles by `operation_id`, and commits `COMPLETED` without another provider effect.
+
+Classification: **EXPERIMENTALLY_SUPPORTED**, case-level and limited to the tested same-package API-35 emulator topology.
+
+### Caller recovery implications
+
+The run provides case-level support for these caller invariants:
+
+```text
+I-CALLER-1 durable intent precedes dispatch
+I-CALLER-2 ambiguity is preserved until recovery/reconciliation
+I-CALLER-3 reconciliation targets the durable operation identity
+I-CALLER-4 known absence is explicit
+I-CALLER-5 reconciliation does not reapply an established effect
+I-CALLER-6 caller process identity changes across injected death
+I-CALLER-7 recovery is monotonic in the tested B4/B5 paths
+```
+
+These are not generalized Android guarantees. In particular, concurrent recovery (B6), stale-result ordering (B7), end-to-end `AgentRuntime` integration, and cross-package boundaries remain untested.
+
+## Revised next gate
+
+```text
+B2/B3  provider-side recovery        EXPERIMENTALLY_SUPPORTED
+B4/B5  caller-side recovery          EXPERIMENTALLY_SUPPORTED
+                    |
+                    v
+B6     concurrent recovery            OPEN
+                    |
+                    v
+B7     stale callback ordering        OPEN
+                    |
+                    v
+T3     distinct provider package     OPEN
+```
+
+Do not add Room or WorkManager as a response to the B4/B5 result. The next discriminating experiment is B6, with operation-keyed coordination and duplicate-recovery races explicitly instrumented.
