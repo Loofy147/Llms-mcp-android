@@ -18,12 +18,14 @@ open class T2CallerService : Service() {
         const val DIE_AFTER_PROVIDER_REPLY_BEFORE_COMPLETE = 2
     }
 
+    protected open val callerStoreNamespace: String = "main"
+
     private lateinit var store: T2CallerStore
     private val callerProcessInstanceId = UUID.randomUUID().toString()
 
     override fun onCreate() {
         super.onCreate()
-        store = T2CallerStore(this)
+        store = T2CallerStore(this, callerStoreNamespace)
     }
 
     override fun onBind(intent: Intent): IBinder = binder
