@@ -53,7 +53,9 @@ The model may reason and request a tool, but a model response never authorizes a
 - `docs/architecture/ECOSYSTEM_RESEARCH_2026-09.md`
 - `docs/architecture/ANTHROPIC_REFERENCE_REVIEW_2026-09-17.md`
 - `docs/architecture/ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
+- `docs/architecture/ECOSYSTEM_RESEARCH_ANTHROPIC_ADDENDUM_2026-09-17.md`
 - `docs/security/PRIVACY_SECURITY_INVARIANTS_v0.2.md`
+- `docs/security/ANTHROPIC_SECURITY_SYNC_2026-09-17.md`
 
 ## Current implementation
 
@@ -108,6 +110,8 @@ The 2026-09-17 Anthropic review is recorded as external evidence, not as an impl
 
 - `docs/architecture/ANTHROPIC_REFERENCE_REVIEW_2026-09-17.md`
 - `docs/architecture/ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
+- `docs/architecture/ECOSYSTEM_RESEARCH_ANTHROPIC_ADDENDUM_2026-09-17.md`
+- `docs/security/ANTHROPIC_SECURITY_SYNC_2026-09-17.md`
 
 The main extracted deltas are credential-use isolation (`CredentialRef`), provenance-aware egress, caller-side durable recovery, conditional durable execution events, environment containment for high-power capabilities, and a current-version MCP authorization/lifecycle re-audit. None is considered implemented merely because Anthropic documents it.
 
