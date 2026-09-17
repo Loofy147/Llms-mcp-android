@@ -55,6 +55,7 @@ The model may reason and request a tool, but a model response never authorizes a
 - `docs/architecture/ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
 - `docs/architecture/ECOSYSTEM_RESEARCH_ANTHROPIC_ADDENDUM_2026-09-17.md`
 - `docs/architecture/MUSE_REFERENCE_REVIEW_2026-09-17.md`
+- `docs/architecture/MUSE_ADOPTION_DELTAS_2026-09-17.md`
 - `docs/security/PRIVACY_SECURITY_INVARIANTS_v0.2.md`
 - `docs/security/ANTHROPIC_SECURITY_SYNC_2026-09-17.md`
 - `docs/security/MUSE_SECURITY_SYNC_2026-09-17.md`
@@ -123,6 +124,7 @@ Muse is recorded as a second external architecture/security reference. The revie
 
 Records:
 - `docs/architecture/MUSE_REFERENCE_REVIEW_2026-09-17.md`
+- `docs/architecture/MUSE_ADOPTION_DELTAS_2026-09-17.md`
 - `docs/security/MUSE_SECURITY_SYNC_2026-09-17.md`
 
 The combined external evidence strengthens the same local boundary model: model/reasoning is not authority; approval is not a chat token; credentials should be references until the final protected transport boundary; egress should be attributable to data and destination; and high-power execution needs environment containment in addition to policy.
