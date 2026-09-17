@@ -11,6 +11,7 @@ class T2ProviderService : Service() {
         const val NO_FAILURE = 0
         const val DIE_AFTER_RECEIVED = 1
         const val DIE_AFTER_EFFECT = 2
+        const val ABSENT = "ABSENT"
     }
 
     private lateinit var store: T2ProviderStore
@@ -53,6 +54,9 @@ class T2ProviderService : Service() {
 
         override fun getState(operationId: String): String =
             requireNotNull(store.get(operationId)).state.name
+
+        override fun lookupState(operationId: String): String =
+            store.get(operationId)?.state?.name ?: ABSENT
 
         override fun getEffectCount(operationId: String): Int =
             requireNotNull(store.get(operationId)).effectCount
