@@ -54,8 +54,10 @@ The model may reason and request a tool, but a model response never authorizes a
 - `docs/architecture/ANTHROPIC_REFERENCE_REVIEW_2026-09-17.md`
 - `docs/architecture/ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
 - `docs/architecture/ECOSYSTEM_RESEARCH_ANTHROPIC_ADDENDUM_2026-09-17.md`
+- `docs/architecture/MUSE_REFERENCE_REVIEW_2026-09-17.md`
 - `docs/security/PRIVACY_SECURITY_INVARIANTS_v0.2.md`
 - `docs/security/ANTHROPIC_SECURITY_SYNC_2026-09-17.md`
+- `docs/security/MUSE_SECURITY_SYNC_2026-09-17.md`
 
 ## Current implementation
 
@@ -106,14 +108,26 @@ Credentials are isolated behind a Keystore-backed `CredentialStore`; ordinary se
 
 ## External architecture synchronization
 
-The 2026-09-17 Anthropic review is recorded as external evidence, not as an implementation requirement. The compact adoption bridge identifies what the review changes locally and what remains open:
+### Anthropic — 2026-09-17
 
+Anthropic research is recorded as external evidence, not as implementation requirements. Main extracted deltas are credential-use isolation (`CredentialRef`), provenance-aware egress, caller-side durable recovery, conditional durable execution events, environment containment for high-power capabilities, and current-protocol MCP authorization/lifecycle review.
+
+Records:
 - `docs/architecture/ANTHROPIC_REFERENCE_REVIEW_2026-09-17.md`
 - `docs/architecture/ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
-- `docs/architecture/ECOSYSTEM_RESEARCH_ANTHROPIC_ADDENDUM_2026-09-17.md`
 - `docs/security/ANTHROPIC_SECURITY_SYNC_2026-09-17.md`
 
-The main extracted deltas are credential-use isolation (`CredentialRef`), provenance-aware egress, caller-side durable recovery, conditional durable execution events, environment containment for high-power capabilities, and a current-version MCP authorization/lifecycle re-audit. None is considered implemented merely because Anthropic documents it.
+### Meta Muse — 2026-09-17
+
+Muse is recorded as a second external architecture/security reference. The review focuses on Secure VM isolation, Sentinel enforcement, scoped approval, credential surrogation, layer-4/7 egress enforcement, tainted egress/data provenance, narrow browser brokering, durable execution/audit history, and the distinction between runtime isolation and confidential computing.
+
+Records:
+- `docs/architecture/MUSE_REFERENCE_REVIEW_2026-09-17.md`
+- `docs/security/MUSE_SECURITY_SYNC_2026-09-17.md`
+
+The combined external evidence strengthens the same local boundary model: model/reasoning is not authority; approval is not a chat token; credentials should be references until the final protected transport boundary; egress should be attributable to data and destination; and high-power execution needs environment containment in addition to policy.
+
+External product claims do not upgrade local evidence. Current implementation status remains governed by repository code and executed experiments.
 
 ## Important boundaries that remain open
 
@@ -125,10 +139,10 @@ Open engineering gates include:
 - Android approval presentation/resumption;
 - capability-specific reconciliation against real external systems;
 - caller-side durable `UNKNOWN_OUTCOME`, concurrency recovery, and stale-result ordering;
-- complete content minimization/redaction and finer-grained egress policy;
+- complete content minimization/redaction and provenance-aware egress policy;
 - credential-use isolation beyond protected storage;
 - immutable/tamper-evident audit semantics;
-- native internal MCP adapter extraction and current-protocol security re-audit;
+- native internal MCP adapter extraction and current-protocol security/lifecycle re-audit;
 - real Android/device CapabilityExecutor adapters beyond the current deterministic built-ins;
 - broader Android-native activation surfaces;
 - production profile/policy management;
