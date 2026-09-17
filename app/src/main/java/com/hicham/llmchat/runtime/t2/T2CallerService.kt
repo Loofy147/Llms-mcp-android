@@ -11,7 +11,7 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-class T2CallerService : Service() {
+open class T2CallerService : Service() {
     companion object {
         const val NO_FAILURE = 0
         const val DIE_BEFORE_DISPATCH = 1
