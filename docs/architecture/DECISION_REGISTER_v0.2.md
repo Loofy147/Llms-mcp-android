@@ -1,7 +1,7 @@
 # Decision Register v0.2
 
-Status: Active architecture reconciliation baseline
-Date: 2026-09-05
+Status: Active architecture reconciliation baseline + 2026-09-17 external reference synchronization
+Date: 2026-09-17
 Supersedes: `DECISION_REGISTER_v0.1.md` for new design decisions
 
 ## Decision classes
@@ -33,6 +33,9 @@ Supersedes: `DECISION_REGISTER_v0.1.md` for new design decisions
 | D-14 | One runtime core is intended to support Personal, Developer, and Product/Public profiles. | ACCEPTED |
 | D-15 | Important control-plane state is durable and recoverable; execution attempts have explicit identity and terminal-state semantics. | ACCEPTED |
 | D-16 | Capability adoption should be prioritized by independent verifiability and observability before breadth of autonomy. | ACCEPTED |
+| D-17 | Execution environments, agents/harnesses, and durable semantic state are separate concerns; no process, worker, sandbox, or vendor runtime is itself canonical state. | ACCEPTED |
+| D-18 | Credential references and credential values are distinct security objects; agent/model-facing paths should carry references, not raw secrets. | ACCEPTED AS TARGET INVARIANT |
+| D-19 | Session/event history, Run/Effect state, Evidence, and durable Memory are distinct semantic categories. | ACCEPTED AS TARGET MODEL |
 
 ## Verification-first design principle
 
@@ -94,6 +97,11 @@ Model      = optional reasoning component
 | I-12 | Activation source, authorizing identity, Action/Capability identity, and Run identity remain attributable. |
 | I-13 | High-impact effects require appropriate policy controls and, where configured, explicit approval. |
 | I-14 | Product/Public profiles cannot weaken foundational security invariants through UI configuration. |
+| I-15 | A credential reference is not a credential value; raw secret values must not enter model context, model-facing tool schemas, ActionPlan content, ordinary Evidence, normal logs, or exported telemetry. | TARGET INVARIANT / OPEN PROOF |
+| I-16 | Authorization and containment are complementary controls; high-power Capabilities must specify execution-environment boundaries in addition to policy/approval. | ACCEPTED |
+| I-17 | Policy authorization, human approval, automated risk signals, model reasoning, and user preferences are separate concepts. | ACCEPTED |
+| I-18 | A remote/protocol adapter cannot become canonical authority merely because it defines its own authentication or lifecycle semantics. | ACCEPTED |
+| I-19 | Durable event history, where required, must not be confused with live streaming previews. | TARGET INVARIANT / OPEN IMPLEMENTATION |
 
 ## Product policies
 
@@ -116,6 +124,8 @@ Model      = optional reasoning component
 | T-05 | Android App Functions | Adapter candidate; validate current platform maturity before adoption. |
 | T-06 | Local model runtime | Provider implementation behind local model contract; no vendor lock-in. |
 | T-07 | WorkManager | Candidate for supported persistent/deferred background work. |
+| T-08 | CredentialRef/protected resolver | Candidate local security primitive; implementation deferred until a boundary test specifies secret-flow invariants. |
+| T-09 | Durable execution event log | Candidate semantic primitive only if B4-B7 demonstrate that Run/Effect state alone is insufficient. |
 
 ## Required experiments
 
@@ -132,6 +142,13 @@ Model      = optional reasoning component
 | E-09 | Current MCP adapter path. | Protocol behavior remains outside core state/authority model. |
 | E-10 | Personal developer capability family. | At least 20 cases across 3+ repository/project states; measure verification quality and intervention rate. |
 | E-11 | Verification-first ranking. | Compare automation outcomes for high- versus low-verifiability capabilities. |
+| E-12 | Caller-side unknown-outcome recovery after provider effect. | Caller process loss after dispatch; restart must classify `UNKNOWN_OUTCOME`, reconcile by operation identity, and avoid duplicate external effect. |
+| E-13 | Concurrent recovery. | Multiple recovery actors for one operation produce one authoritative transition or explicitly safe concurrent reads. |
+| E-14 | Stale result ordering. | Old attempt/callback cannot mutate a newer authoritative terminal state. |
+| E-15 | Credential value non-observability. | Raw secret is absent from model input, tool schema, ActionPlan, Evidence, ordinary logs, durable Run content, and exported telemetry; only the protected transport boundary can resolve it. |
+| E-16 | Provenance-aware egress. | Egress decisions remain correct when the same data class originates from different sources/flows and when credentials are bound to different destinations. |
+| E-17 | Minimal event sufficiency. | Determine whether B4-B7 can be represented using Run/Effect state alone; introduce event history only for an empirically demonstrated missing semantic. |
+| E-18 | High-power capability containment. | Demonstrate that filesystem/network/environment boundaries still cap blast radius when policy/model-layer assumptions fail. |
 
 ## Research-derived capability experiments
 
@@ -181,6 +198,28 @@ The full proposal and verification dimensions are documented in `PERSONAL_DEVELO
 | R-08 | General workflow engine, Capability Graph, swarm, plugin marketplace, or server tenancy in the core before measured need. | High complexity and exit cost without proven demand. |
 | R-09 | Free-form model-authored shell/command execution as a core Action interface. | Typed parameters and bounded capabilities provide a stronger authorization and verification boundary. |
 | R-10 | Treat model-compressed observations or model-generated risk ratings as authoritative evidence. | Compression and analysis are derived reasoning artifacts; authoritative evidence must remain attributable to observations/artifacts/verification. |
+| R-11 | Add a general VM/sandbox to the Android core solely because external agent platforms use one. | Environment containment is a valid security layer, but current target capabilities do not justify the complexity before T2 recovery and capability-risk evidence. |
+| R-12 | Treat a probabilistic risk classifier as the final authorization boundary. | External evidence shows non-zero miss rates; deterministic local authorization remains authoritative. |
+
+## External reference synchronization
+
+The detailed Anthropic review is recorded in:
+
+- `docs/architecture/ANTHROPIC_REFERENCE_REVIEW_2026-09-17.md`
+- `docs/architecture/ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
+
+External evidence changed the research frontier but did not silently promote implementations. The immediate sequence remains:
+
+```text
+B4/B5 caller-side recovery
+    -> B6 concurrency
+    -> B7 stale results
+    -> credential-use isolation
+    -> provenance-aware egress
+    -> event-log decision
+    -> native MCP re-audit
+    -> higher-power execution containment
+```
 
 ## Change control
 
