@@ -29,9 +29,8 @@ class BinderFailureInjectionTest {
             first.getProcessInstanceId()
         }
         try {
-            stage("initial.getEffectCount") {
-                assertEquals(0, first.getEffectCount(operationId))
-            }
+            // The provider has not received this operation yet. Querying its
+            // state here would test an unknown-operation error, not T2 recovery.
             expectProviderDeath("execute.DIE_AFTER_EFFECT") {
                 first.execute(operationId, T2ProviderService.DIE_AFTER_EFFECT)
             }
@@ -133,11 +132,9 @@ class BinderFailureInjectionTest {
         } catch (_: RemoteException) {
             // Expected transport ambiguity: the provider process died mid-RPC.
         } catch (error: IllegalArgumentException) {
-            // On the API 35 emulator, an abrupt provider death after starting the
-            // synchronous reply has been observed as this Parcel null-message
-            // decoding failure instead of RemoteException. Treat only this exact
-            // platform transport signature as the expected death manifestation.
-            assertEquals("[$stage] unexpected Binder exception", "[$stage] unexpected Binder exception")
+            // API 35 instrumentation has also exposed provider death as this
+            // exact Binder-call exception signature. Do not accept arbitrary
+            // IllegalArgumentException instances as a transport failure.
             assertEquals("Required value was null.", error.message)
         }
     }
