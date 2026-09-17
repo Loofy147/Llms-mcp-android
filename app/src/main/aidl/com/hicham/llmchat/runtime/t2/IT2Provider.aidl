@@ -4,6 +4,7 @@ interface IT2Provider {
     void execute(String operationId, int faultMode);
     void reconcile(String operationId);
     String getState(String operationId);
+    String lookupState(String operationId);
     int getEffectCount(String operationId);
     int getPid();
     String getProcessInstanceId();
