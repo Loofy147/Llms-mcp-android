@@ -1,8 +1,8 @@
 # Architecture State Synchronization — 2026-09-17
 
-Status: **CURRENT DOCUMENTATION AUTHORITY / T2 CASE-LEVEL PROOF INTEGRATED**
+Status: **CURRENT DOCUMENTATION AUTHORITY / T2 CASE-LEVEL PROOF INTEGRATED / EXTERNAL REFERENCE SYNCED**
 
-Purpose: establish one auditable current-state boundary after the T2 Binder failure-injection experiment. Historical audits remain unchanged unless a later correction explicitly updates them; this file defines which conclusions are current and which older statements are historical.
+Purpose: establish one auditable current-state boundary after the T2 Binder failure-injection experiment and synchronize that state with the 2026-09-17 external architecture review of Anthropic. Historical audits remain unchanged unless a later correction explicitly updates them; this file defines which conclusions are current and which older statements are historical.
 
 ## 1. Authority rule
 
@@ -11,9 +11,10 @@ When documents disagree:
 1. repository code at the referenced commit is the implementation fact;
 2. executed CI/device evidence is the experiment fact;
 3. this synchronization document defines the current cross-document interpretation;
-4. older research audits retain historical value but must not be read as current implementation status when they predate later evidence.
+4. older research audits retain historical value but must not be read as current implementation status when they predate later evidence;
+5. external vendor research is reference evidence only and cannot promote a local claim without local implementation/test evidence.
 
-This prevents historical notes from silently becoming current architecture requirements.
+This prevents historical notes or external product claims from silently becoming current architecture requirements.
 
 ## 2. Current semantic architecture
 
@@ -139,9 +140,17 @@ The T2 implementation therefore proves a failure/reconciliation mechanism, not t
 - `ANDROID_CROSS_APP_RECOVERY_STATE_MACHINE_AUDIT_2026-09-16.md`
 - synchronized on 2026-09-17; T2 B2/B3 integrated, T3+ remaining.
 
+**Anthropic external reference review**
+- `ANTHROPIC_REFERENCE_REVIEW_2026-09-17.md`
+- status: external research record; no local implementation claim is upgraded by it.
+
+**Anthropic adoption delta**
+- `ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
+- status: compact research-to-engineering bridge.
+
 **This document**
 - `ARCHITECTURE_STATE_SYNC_2026-09-17.md`
-- authority map for resolving document drift.
+- authority map for resolving document drift and current evidence status.
 
 ### Historical research records
 
@@ -170,6 +179,72 @@ Other Android platform/data-plane audits are research records and remain authori
 | reboot / force-stop / package update | OPEN | T5 |
 | power-loss durability | OPEN | separate durability experiment |
 | general exactly-once | NOT CLAIMED | provider-specific property only |
+| Credential-use isolation | OPEN | current Keystore storage does not prove secret-flow isolation |
+| Provenance-aware egress | OPEN | coarse data-class admission exists; source-aware enforcement not proven |
+| Durable session/event model | OPEN / HYPOTHESIS | determine need from B4-B7 before adding a new semantic layer |
+| Environment containment for high-power capabilities | OPEN / FUTURE GATE | current built-ins are narrow; no general VM/sandbox commitment |
+
+## 8.1 External reference synchronization — Anthropic
+
+The 2026-09-17 Anthropic review is treated as external architecture evidence. It confirms useful patterns already present in our design and identifies concrete next gaps:
+
+```text
+Managed agent / harness
+    != execution environment
+    != durable session state
+
+Credential reference
+    != credential value
+
+Policy
+    != human approval
+    != risk classifier
+
+Session/event history
+    != sandbox lifetime
+    != memory
+    != evidence
+```
+
+The highest-value new local implications are:
+
+1. **Credential-use isolation:** a future `CredentialRef` path should keep raw secret values out of model/tool/action/evidence/logging boundaries and resolve them only at a protected transport boundary.
+2. **Provenance-aware egress:** extend the current destination/data-class gate only after a discriminating local invariant is defined.
+3. **Caller-side durability:** use the external session/event pattern as reference while preserving our own Run/Effect semantics; B4/B5 remain the next proof gate.
+4. **Conditional event log:** add an explicit execution-event model only if B4-B7 expose information that Run/Effect state cannot represent safely.
+5. **Containment:** high-power capabilities eventually require execution-environment restrictions in addition to authorization; this does not justify adding a generic VM/sandbox to the Android core now.
+6. **MCP:** keep authentication, authorization, server declaration, and execution lifecycle as separate concerns; re-audit against current MCP authorization/Tasks semantics when native MCP extraction begins.
+
+Vendor-reported architecture or evaluation results do not upgrade local claims.
+
+## 8.2 Current synchronized decisions
+
+Preserve:
+
+```text
+Model != Authority
+Tool != Authority
+Preference != Authority
+Policy != Approval
+Approval != Risk Classifier
+CredentialRef != CredentialValue
+MCP != Canonical Domain Model
+Process != Durable Semantic Identity
+Sandbox != Durable Semantic Identity
+```
+
+Do not add yet:
+
+```text
+Generic event bus
+Generic VM/sandbox in the APK
+Multi-agent coordinator
+Cloud tenancy layer
+ML risk classifier as authority
+WorkManager as domain truth
+```
+
+These positions are recorded in `DECISION_REGISTER_v0.2.md` and the detailed Anthropic research record.
 
 ## 9. Current next gate
 
@@ -187,6 +262,16 @@ caller durable dispatch/checkpoint
 
 Then isolate concurrent recovery (B6) and stale-result ordering (B7).
 
+After those recovery proofs:
+
+```text
+credential-use isolation
+    -> provenance-aware egress
+    -> event-log sufficiency test
+    -> native MCP security/lifecycle re-audit
+    -> high-power capability containment experiments
+```
+
 Only after these boundaries are explicitly scoped should T3 introduce a distinct provider package/application and Android discovery/authorization variables.
 
 ## 10. Merge gate
@@ -197,6 +282,7 @@ The branch may be fast-forwarded into `main` only when:
 2. the final head's unit/build/instrumentation workflow is green;
 3. Run #262 remains preserved as the case-level execution proof for B2/B3;
 4. no document claims unsupported T2 generality;
-5. `main` has no divergence that would require a merge conflict.
+5. external reference notes are clearly marked as external evidence rather than local proof;
+6. `main` has no divergence that would require a merge conflict.
 
 The merge itself does not upgrade any OPEN claim to ESTABLISHED.
