@@ -16,8 +16,8 @@ internal enum class T2CallerState {
 
 internal data class T2CallerOperation(val state: T2CallerState)
 
-internal class T2CallerStore(context: Context) {
-    private val root = File(context.filesDir, "t2-caller/operations")
+internal class T2CallerStore(context: Context, namespace: String = "main") {
+    private val root = File(context.filesDir, "t2-caller/$namespace/operations")
 
     init {
         check(root.mkdirs() || root.isDirectory) { "Could not create $root" }
