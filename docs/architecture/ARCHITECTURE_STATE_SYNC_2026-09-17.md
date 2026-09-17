@@ -2,7 +2,7 @@
 
 Status: **CURRENT DOCUMENTATION AUTHORITY / T2 CASE-LEVEL PROOF INTEGRATED / EXTERNAL REFERENCE SYNCED**
 
-Purpose: establish one auditable current-state boundary after the T2 Binder failure-injection experiment and synchronize that state with the 2026-09-17 external architecture review of Anthropic. Historical audits remain unchanged unless a later correction explicitly updates them; this file defines which conclusions are current and which older statements are historical.
+Purpose: establish one auditable current-state boundary after the T2 Binder failure-injection experiment and synchronize that state with the 2026-09-17 external architecture reviews of Anthropic and Meta Muse. Historical audits remain unchanged unless a later correction explicitly updates them; this file defines which conclusions are current and which older statements are historical.
 
 ## 1. Authority rule
 
@@ -144,9 +144,14 @@ The T2 implementation therefore proves a failure/reconciliation mechanism, not t
 - `ANTHROPIC_REFERENCE_REVIEW_2026-09-17.md`
 - status: external research record; no local implementation claim is upgraded by it.
 
-**Anthropic adoption delta**
+**Meta Muse external reference review**
+- `MUSE_REFERENCE_REVIEW_2026-09-17.md`
+- status: external research record; no local implementation claim is upgraded by it.
+
+**External adoption deltas**
 - `ANTHROPIC_ADOPTION_DELTAS_2026-09-17.md`
-- status: compact research-to-engineering bridge.
+- `MUSE_ADOPTION_DELTAS_2026-09-17.md`
+- status: compact research-to-engineering bridges.
 
 **This document**
 - `ARCHITECTURE_STATE_SYNC_2026-09-17.md`
@@ -183,6 +188,7 @@ Other Android platform/data-plane audits are research records and remain authori
 | Provenance-aware egress | OPEN | coarse data-class admission exists; source-aware enforcement not proven |
 | Durable session/event model | OPEN / HYPOTHESIS | determine need from B4-B7 before adding a new semantic layer |
 | Environment containment for high-power capabilities | OPEN / FUTURE GATE | current built-ins are narrow; no general VM/sandbox commitment |
+| Browser capability broker | FUTURE ADAPTER | no current browser implementation |
 
 ## 8.1 External reference synchronization — Anthropic
 
@@ -206,7 +212,7 @@ Session/event history
     != evidence
 ```
 
-The highest-value new local implications are:
+Highest-value local implications:
 
 1. **Credential-use isolation:** a future `CredentialRef` path should keep raw secret values out of model/tool/action/evidence/logging boundaries and resolve them only at a protected transport boundary.
 2. **Provenance-aware egress:** extend the current destination/data-class gate only after a discriminating local invariant is defined.
@@ -215,9 +221,60 @@ The highest-value new local implications are:
 5. **Containment:** high-power capabilities eventually require execution-environment restrictions in addition to authorization; this does not justify adding a generic VM/sandbox to the Android core now.
 6. **MCP:** keep authentication, authorization, server declaration, and execution lifecycle as separate concerns; re-audit against current MCP authorization/Tasks semantics when native MCP extraction begins.
 
+## 8.2 External reference synchronization — Meta Muse
+
+Muse adds a second independent reference for the same frontier. Meta documents Secure VM isolation, Sentinel enforcement at connector/network boundaries, scoped approval, just-in-time credential insertion, layer-4/7 egress enforcement, tainted egress, brokered browser access, durable audit/replay concepts, and explicit acknowledgement that prompt injection remains an open problem.
+
+The useful local translation is:
+
+```text
+execution environment
+    != durable semantic state
+
+Sentinel-like enforcement
+    = future separation of authorization from model/runtime when needed
+
+Credential surrogate/reference
+    != real secret
+
+data provenance
+    -> egress authorization
+
+browser power
+    -> narrow brokered capability
+```
+
+Muse does **not** justify adding Secure VM/eBPF/browser infrastructure now. The current next proof remains caller-side recovery. If B4-B7 require a new durable event primitive, add the smallest one that closes the demonstrated semantic gap.
+
+Primary external sources:
+- https://ai.meta.com/muse/
+- https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/
+- https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse
+- https://research.meta.ai/blog/addressing-third-party-testing-misconfiguration-muse-spark-1-1
+
 Vendor-reported architecture or evaluation results do not upgrade local claims.
 
-## 8.2 Current synchronized decisions
+## 8.3 Combined cross-vendor synthesis
+
+The two independent external reviews converge on the same design boundary:
+
+```text
+Reasoning
+   -> Activation
+   -> Policy / Approval / Risk signal
+   -> Authorization
+   -> CapabilityRef + CredentialRef
+   -> Execution environment
+   -> Effect
+   -> Observation / Verification
+   -> Evidence
+   -> Durable Run / Event history
+   -> Session / Memory as separate semantic layers
+```
+
+This is a local synthesis, not a claim that either vendor exposes this exact graph.
+
+## 8.4 Current synchronized decisions
 
 Preserve:
 
@@ -238,13 +295,15 @@ Do not add yet:
 ```text
 Generic event bus
 Generic VM/sandbox in the APK
+Kernel-level eBPF taint replication
+Browser infrastructure before a real browser capability
 Multi-agent coordinator
 Cloud tenancy layer
 ML risk classifier as authority
 WorkManager as domain truth
 ```
 
-These positions are recorded in `DECISION_REGISTER_v0.2.md` and the detailed Anthropic research record.
+These positions are recorded in `DECISION_REGISTER_v0.2.md` and the detailed external research records.
 
 ## 9. Current next gate
 
