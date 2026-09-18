@@ -250,3 +250,35 @@ The external reviews change research priorities but do not upgrade local claims.
 ## Change control
 
 Changing a D/I item requires an explicit architecture review. A T item may change provided D/I invariants remain satisfied. An E item may be promoted only after evidence is recorded. Product policies may change without architectural redesign when they remain inside the same authority/security envelope.
+
+## Developer capability implementation gate
+
+### D-17 — Workspace authority precedes developer filesystem capabilities
+Developer-facing filesystem access must be mediated through an explicit user-granted `WorkspaceAuthority`. Capabilities must not accept arbitrary filesystem roots.
+
+### D-18 — Workspace access is operation-scoped
+A `WorkspaceGrant` explicitly declares allowed operations such as `READ`, `LIST`, or `HASH`. Each capability checks the requested operation against the grant.
+
+### D-19 — Android SAF is the initial implementation backend
+Android Storage Access Framework tree grants are the first `WorkspaceAuthority` implementation. The semantic contract remains backend-independent.
+
+### D-20 — First implemented developer capabilities
+The current vertical slice implements `dev.file.read` and `dev.file.hash` through the existing `AgentRuntime` and `CapabilityExecutor`.
+
+### D-21 — Resource bounds are part of the capability contract
+`dev.file.read` is capped at 64 KiB and requires strict UTF-8. `dev.file.hash` streams SHA-256 and is capped at 16 MiB without returning file content.
+
+### D-22 — Directory enumeration is deferred
+`dev.directory.list` is not yet implemented because filename disclosure and model egress semantics require separate review.
+
+### D-23 — Process backends remain deferred
+Shell, Termux, PRoot/LinuxOnAndroid, and other process-execution backends remain outside this read-only capability gate.
+
+## Required device evidence for D-17–D-21
+
+1. User-granted workspace can be selected and persisted.
+2. An in-workspace file can be read and hashed through the runtime.
+3. Traversal and outside-root attempts fail.
+4. Revocation causes later access to fail closed.
+5. App restart preserves or explicitly reports persisted grant state correctly.
+6. Unavailable/revoked provider authority cannot be bypassed by runtime, tool, or model.
