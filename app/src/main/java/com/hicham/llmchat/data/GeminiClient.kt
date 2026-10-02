@@ -150,8 +150,7 @@ class GeminiClient(
             val toolUses = message.blocks.filterIsInstance<ContentBlock.ToolUse>()
             val toolResults = message.blocks.filterIsInstance<ContentBlock.ToolResult>()
             val texts = message.blocks.filterIsInstance<ContentBlock.Text>()
-                .joinToString(separator = "
-") { it.text }
+                .joinToString(separator = "\n") { it.text }
 
             if (message.role == "assistant" && toolUses.isNotEmpty()) {
                 val obj = JSONObject().put("role", "assistant")
