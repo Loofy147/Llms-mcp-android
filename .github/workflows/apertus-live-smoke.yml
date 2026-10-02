@@ -1,0 +1,111 @@
+name: Apertus live smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - hackathon/apertus-personal-ai
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  cscs-live-smoke:
+    runs-on: ubuntu-latest
+    env:
+      CSCS_INFERENCE_API_KEY: \${{ secrets.CSCS_INFERENCE_API_KEY }}
+      CSCS_MODEL: swiss-ai/Apertus-v1.5-8B
+      CSCS_API_URL: https://api.inference.cscs.ch/v1
+    steps:
+      - name: Detect CSCS credential
+        id: credential
+        shell: bash
+        run: |
+          if [[ -z "\${CSCS_INFERENCE_API_KEY}" ]]; then
+            echo "configured=false" >> "\$GITHUB_OUTPUT"
+            echo "CSCS_INFERENCE_API_KEY is not configured; skipping live inference."
+          else
+            echo "configured=true" >> "\$GITHUB_OUTPUT"
+          fi
+
+      - name: Query available models
+        if: steps.credential.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            "\${CSCS_API_URL}/models" \
+            -H "Authorization: Bearer \${CSCS_INFERENCE_API_KEY}" \
+            -H "Content-Type: application/json" \
+            > models.json
+          grep -F "\"\${CSCS_MODEL}\"" models.json
+
+      - name: Live Apertus inference
+        if: steps.credential.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            "\${CSCS_API_URL}/chat/completions" \
+            -H "Authorization: Bearer \${CSCS_INFERENCE_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d @- > response.json <<JSON
+          {
+            "model": "\${CSCS_MODEL}",
+            "messages": [
+              {
+                "role": "user",
+                "content": "Reply with the exact marker LIVE_APERTUS_OK and nothing else."
+              }
+            ],
+            "temperature": 0
+          }
+          JSON
+          grep -F '"LIVE_APERTUS_OK"' response.json
+
+      - name: Live Apertus tool-call probe
+        if: steps.credential.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            "\${CSCS_API_URL}/chat/completions" \
+            -H "Authorization: Bearer \${CSCS_INFERENCE_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d @- > tool-response.json <<JSON
+          {
+            "model": "\${CSCS_MODEL}",
+            "messages": [
+              {
+                "role": "system",
+                "content": "When the remember tool is available, you must call it. Do not answer in plain text."
+              },
+              {
+                "role": "user",
+                "content": "Remember that apertus_smoke=ok."
+              }
+            ],
+            "tools": [
+              {
+                "type": "function",
+                "function": {
+                  "name": "remember",
+                  "description": "Persist a bounded local memory note.",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "key": {"type": "string"},
+                      "value": {"type": "string"}
+                    },
+                    "required": ["key", "value"],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            ],
+            "tool_choice": "required",
+            "temperature": 0
+          }
+          JSON
+          jq -e '.choices[0].message.tool_calls | length >= 1' tool-response.json > /dev/null
+          jq -e '.choices[0].message.tool_calls[0].function.name == "remember"' tool-response.json > /dev/null
