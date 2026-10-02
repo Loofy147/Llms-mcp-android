@@ -19,6 +19,7 @@ object AndroidRuntimeFactory {
         val app = context.applicationContext
         val runtimeDir = File(app.filesDir, "agent-runtime")
         runtimeDir.mkdirs()
+        val memoryStore = LocalMemoryStore(app)
 
         val capabilityExecutor = RegistryCapabilityExecutor(
             mapOf(
@@ -29,6 +30,18 @@ object AndroidRuntimeFactory {
                     CapabilityExecution(
                         output = mapOf("result" to value.toString()),
                         observations = listOf(Observation("result", value.toString()))
+                    )
+                },
+                "memory.note.write" to { invocation ->
+                    val key = invocation.parameters["key"].orEmpty()
+                    val value = invocation.parameters["value"].orEmpty()
+                    val saved = memoryStore.remember(key, value)
+                    CapabilityExecution(
+                        output = mapOf("value" to saved),
+                        observations = listOf(
+                            Observation("memory_key", key.trim()),
+                            Observation("memory_value", saved)
+                        )
                     )
                 }
             )
