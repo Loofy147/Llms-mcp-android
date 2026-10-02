@@ -1,0 +1,160 @@
+name: Gemini live smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - hackathon/apertus-personal-ai
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  gemini-live-smoke:
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_API_BASE: https://generativelanguage.googleapis.com/v1beta
+    steps:
+      - name: Detect Gemini credential
+        id: credential
+        shell: bash
+        run: |
+          if [[ -z "${GEMINI_API_KEY}" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "GEMINI_API_KEY is not configured; skipping live inference."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Discover a Gemini model supporting generateContent
+        id: models
+        if: steps.credential.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error             "${GEMINI_API_BASE}/models"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             > models.json
+
+          jq -r '
+            .models[]?
+            | select(.name | test("/gemini-"))
+            | select((.supportedGenerationMethods // []) | index("generateContent") != null)
+            | [.name, (.supportedGenerationMethods // [] | join(","))]
+            | @tsv
+          ' models.json | head -n 30
+
+          model=$(jq -r '
+            .models[]?
+            | select((.name | test("/gemini-")))
+            | select((.supportedGenerationMethods // []) | index("generateContent") != null)
+            | select(
+                (.name | endswith("/gemini-3.8-flash"))
+                or (.name | endswith("/gemini-3.7-flash"))
+                or (.name | endswith("/gemini-3.6-flash"))
+                or (.name | endswith("/gemini-3.5-flash"))
+                or (.name | endswith("/gemini-3.5-flash-lite"))
+                or (.name | endswith("/gemini-3.1-flash-lite"))
+                or (.name | endswith("/gemini-2.5-flash"))
+              )
+            | .name
+            | split("/")[-1]
+          ' models.json | head -n 1)
+
+          if [[ -z "$model" ]]; then
+            echo "No Gemini model supporting generateContent matched the probe set."
+            exit 1
+          fi
+
+          echo "Selected Gemini model: $model"
+          echo "model=$model" >> "$GITHUB_OUTPUT"
+
+      - name: Live Gemini completion
+        if: steps.credential.outputs.configured == 'true'
+        env:
+          GEMINI_MODEL: ${{ steps.models.outputs.model }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --silent --show-error             -o response.json             -w '%{http_code}'             "${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > status.txt <<JSON
+          {
+            "contents": [
+              {
+                "role": "user",
+                "parts": [
+                  {
+                    "text": "Reply with the exact marker LIVE_GEMINI_OK and nothing else."
+                  }
+                ]
+              }
+            ],
+            "generationConfig": {
+              "temperature": 0
+            }
+          }
+          JSON
+          http_code=$(cat status.txt)
+          echo "Gemini generateContent HTTP status: $http_code"
+          if [[ "$http_code" != "200" ]]; then
+            cat response.json
+            exit 1
+          fi
+          jq -r '[.candidates[0].content.parts[]?.text // empty] | join("")' response.json             | grep -Fx 'LIVE_GEMINI_OK'
+
+      - name: Live Gemini tool-call probe
+        if: steps.credential.outputs.configured == 'true'
+        env:
+          GEMINI_MODEL: ${{ steps.models.outputs.model }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --silent --show-error             -o tool-response.json             -w '%{http_code}'             "${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > tool-status.txt <<JSON
+          {
+            "contents": [
+              {
+                "role": "user",
+                "parts": [
+                  {
+                    "text": "Remember that gemini_smoke=ok."
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "functionDeclarations": [
+                  {
+                    "name": "remember",
+                    "description": "Persist a bounded local memory note.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "key": {"type": "string"},
+                        "value": {"type": "string"}
+                      },
+                      "required": ["key", "value"]
+                    }
+                  }
+                ]
+              }
+            ],
+            "toolConfig": {
+              "functionCallingConfig": {
+                "mode": "ANY",
+                "allowedFunctionNames": ["remember"]
+              }
+            },
+            "generationConfig": {
+              "temperature": 0
+            }
+          }
+          JSON
+          http_code=$(cat tool-status.txt)
+          echo "Gemini tool-call HTTP status: $http_code"
+          if [[ "$http_code" != "200" ]]; then
+            cat tool-response.json
+            exit 1
+          fi
+          jq -e '
+            [.candidates[0].content.parts[]?.functionCall?.name // empty]
+            | index("remember") != null
+          ' tool-response.json > /dev/null

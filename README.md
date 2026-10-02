@@ -66,6 +66,23 @@ The model may reason and request a tool, but a model response never authorizes a
 
 `MainActivity` creates `AssistantRuntime`. The current Chat/Model path talks to that facade rather than constructing a provider as a separate local execution authority.
 
+### Provider routing
+
+The persisted model setting selects the provider without creating a second runtime authority:
+
+```text
+claude-sonnet-5
+  -> AnthropicModelProvider
+
+nebius:nvidia/nvidia-nemotron-3-nano-30b-a3b
+  -> NebiusModelProvider
+  -> Nebius Token Factory
+```
+
+Both providers share the same `AgentRuntime`, `RuntimeToolGateway`, and `EgressPolicy`. The Nebius adapter does not execute local effects directly.
+
+The Nebius integration is currently a hackathon branch slice and remains subject to live-provider, device, and end-to-end verification.
+
 ### Canonical local tool path
 
 Model-facing tool descriptions live in `ToolRegistry`. They contain no effectful execution method.
@@ -99,13 +116,31 @@ Approval decisions are one-use and bound to the exact Run, requester identity, A
 
 ### Local egress boundary
 
-Remote model requests cross an explicit `EgressPolicy` before the HTTP request is executed. The current policy requires HTTPS, uses an explicit host allowlist, rejects credentials embedded in destination URLs, and checks the declared data classes. The Android composition currently allows only `api.anthropic.com`.
+Remote model requests cross an explicit `EgressPolicy` before the HTTP request is executed. The current policy requires HTTPS, uses an explicit host allowlist, rejects credentials embedded in destination URLs, and checks the declared data classes. The hackathon branch additionally allows `api.tokenfactory.nebius.com` for Nebius Token Factory inference.
 
 This is an admission/classification boundary, not yet a complete data-minimization or redaction system.
 
 ### Secrets and settings
 
 Credentials are isolated behind a Keystore-backed `CredentialStore`; ordinary settings do not persist plaintext API/MCP credentials. Legacy API-key migration and MCP credential cleanup are implemented.
+
+## Nebius x NVIDIA hackathon
+
+The hackathon branch is:
+
+`hackathon/nebius-personal-ai`
+
+The implementation roadmap and evidence checklist is maintained in the associated workbench rather than duplicating the full execution ledger here.
+
+Current branch gates:
+
+- Provider route wired into the real `AssistantRuntime`.
+- CI runs on pushes and pull requests.
+- Live Token Factory authentication/inference is not yet verified.
+- A bounded real action and end-to-end Observation/Verification/Evidence path still need demonstration.
+- The public repository now contains an MIT license for open-source submission requirements.
+
+The branch must not be presented as production-ready autonomous execution.
 
 ## External architecture synchronization
 
@@ -155,4 +190,4 @@ The repository must not be described as providing exactly-once external executio
 
 ## Build
 
-`.github/workflows/build-apk.yml` runs JVM unit tests before assembling the debug APK and uploading it as a workflow artifact.
+`.github/workflows/build-apk.yml` runs JVM unit tests before assembling the debug APK, uploading it as a workflow artifact, and running Android instrumentation tests. It is configured for push, pull request, and manual dispatch events.
