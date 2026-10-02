@@ -3,6 +3,7 @@ package com.hicham.llmchat
 import android.content.Context
 import com.hicham.llmchat.data.AnthropicModelProvider
 import com.hicham.llmchat.data.ConversationListener
+import com.hicham.llmchat.data.CscsModelProvider
 import com.hicham.llmchat.data.ModelProvider
 import com.hicham.llmchat.data.ModelProviderRoute
 import com.hicham.llmchat.data.NebiusModelProvider
@@ -27,7 +28,8 @@ class AssistantRuntime(context: Context) {
     private val egressPolicy: EgressPolicy = AllowlistEgressPolicy(
         allowedHosts = setOf(
             "api.anthropic.com",
-            "api.tokenfactory.nebius.com"
+            "api.tokenfactory.nebius.com",
+            "api.inference.cscs.ch"
         ),
         allowedDataClasses = setOf(
             EgressDataClass.USER_CONTENT,
@@ -49,6 +51,8 @@ class AssistantRuntime(context: Context) {
                 AnthropicModelProvider(appContext, agentRuntime, egressPolicy)
             ModelProviderRoute.Provider.NEBIUS ->
                 NebiusModelProvider(appContext, agentRuntime, egressPolicy, route.model)
+            ModelProviderRoute.Provider.CSCS ->
+                CscsModelProvider(appContext, agentRuntime, egressPolicy, route.model)
         }
     }
 }
