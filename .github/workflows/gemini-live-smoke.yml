@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_API_URL: https://generativelanguage.googleapis.com/v1beta/openai
+      GEMINI_API_BASE: https://generativelanguage.googleapis.com/v1beta
     steps:
       - name: Detect Gemini credential
         id: credential
@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error             "https://generativelanguage.googleapis.com/v1beta/models"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             > models.json
+          curl --fail-with-body --silent --show-error             "${GEMINI_API_BASE}/models"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             > models.json
 
           model=$(jq -r '
             .models[]?.name
@@ -66,19 +66,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error             "${GEMINI_API_URL}/chat/completions"             -H "Authorization: Bearer ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > response.json <<JSON
+          curl --fail-with-body --silent --show-error             "${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > response.json <<JSON
           {
-            "model": "${GEMINI_MODEL}",
-            "messages": [
+            "contents": [
               {
                 "role": "user",
-                "content": "Reply with the exact marker LIVE_GEMINI_OK and nothing else."
+                "parts": [
+                  {
+                    "text": "Reply with the exact marker LIVE_GEMINI_OK and nothing else."
+                  }
+                ]
               }
             ],
-            "temperature": 0
+            "generationConfig": {
+              "temperature": 0
+            }
           }
           JSON
-          jq -e '.choices[0].message.content == "LIVE_GEMINI_OK"' response.json > /dev/null
+          jq -r '[.candidates[0].content.parts[]?.text // empty] | join("")' response.json             | grep -Fx 'LIVE_GEMINI_OK'
 
       - name: Live Gemini tool-call probe
         if: steps.credential.outputs.configured == 'true'
@@ -87,40 +92,48 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error             "${GEMINI_API_URL}/chat/completions"             -H "Authorization: Bearer ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > tool-response.json <<JSON
+          curl --fail-with-body --silent --show-error             "${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > tool-response.json <<JSON
           {
-            "model": "${GEMINI_MODEL}",
-            "messages": [
-              {
-                "role": "system",
-                "content": "When the remember tool is available, call it. Do not answer in plain text."
-              },
+            "contents": [
               {
                 "role": "user",
-                "content": "Remember that gemini_smoke=ok."
+                "parts": [
+                  {
+                    "text": "Remember that gemini_smoke=ok."
+                  }
+                ]
               }
             ],
             "tools": [
               {
-                "type": "function",
-                "function": {
-                  "name": "remember",
-                  "description": "Persist a bounded local memory note.",
-                  "parameters": {
-                    "type": "object",
-                    "properties": {
-                      "key": {"type": "string"},
-                      "value": {"type": "string"}
-                    },
-                    "required": ["key", "value"],
-                    "additionalProperties": false
+                "functionDeclarations": [
+                  {
+                    "name": "remember",
+                    "description": "Persist a bounded local memory note.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "key": {"type": "string"},
+                        "value": {"type": "string"}
+                      },
+                      "required": ["key", "value"]
+                    }
                   }
-                }
+                ]
               }
             ],
-            "tool_choice": "auto",
-            "temperature": 0
+            "toolConfig": {
+              "functionCallingConfig": {
+                "mode": "ANY",
+                "allowedFunctionNames": ["remember"]
+              }
+            },
+            "generationConfig": {
+              "temperature": 0
+            }
           }
           JSON
-          jq -e '.choices[0].message.tool_calls | length >= 1' tool-response.json > /dev/null
-          jq -e '.choices[0].message.tool_calls[0].function.name == "remember"' tool-response.json > /dev/null
+          jq -e '
+            [.candidates[0].content.parts[]?.functionCall?.name // empty]
+            | index("remember") != null
+          ' tool-response.json > /dev/null
