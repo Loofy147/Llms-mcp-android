@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_MODEL: gemini-3.8-flash
       GEMINI_API_URL: https://generativelanguage.googleapis.com/v1beta/openai
     steps:
       - name: Detect Gemini credential
@@ -28,20 +27,46 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Discover Gemini model API
+      - name: Discover an available Gemini Flash model
+        id: models
         if: steps.credential.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error "https://generativelanguage.googleapis.com/v1beta/models" -H "x-goog-api-key: ${GEMINI_API_KEY}" -H "Content-Type: application/json" > models.json
-          jq -e --arg model "${GEMINI_MODEL}" '.models[]?.name | endswith("/" + $model)' models.json
+          curl --fail-with-body --silent --show-error             "https://generativelanguage.googleapis.com/v1beta/models"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             > models.json
+
+          model=$(jq -r '
+            .models[]?.name
+            | select(
+                endswith("/gemini-3.8-flash")
+                or endswith("/gemini-3.7-flash")
+                or endswith("/gemini-3.6-flash")
+                or endswith("/gemini-3.5-flash")
+                or endswith("/gemini-3.5-flash-lite")
+                or endswith("/gemini-3.1-flash-lite")
+                or endswith("/gemini-2.5-flash")
+              )
+            | split("/")[-1]
+          ' models.json | head -n 1)
+
+          if [[ -z "$model" ]]; then
+            echo "No supported Gemini Flash model is exposed to this API key."
+            echo "Exposed model ids (non-sensitive):"
+            jq -r '.models[]?.name' models.json | sed 's#^models/##' | head -n 80
+            exit 1
+          fi
+
+          echo "Selected Gemini model: $model"
+          echo "model=$model" >> "$GITHUB_OUTPUT"
 
       - name: Live Gemini completion
         if: steps.credential.outputs.configured == 'true'
+        env:
+          GEMINI_MODEL: ${{ steps.models.outputs.model }}
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error "${GEMINI_API_URL}/chat/completions" -H "Authorization: Bearer ${GEMINI_API_KEY}" -H "Content-Type: application/json" -d @- > response.json <<JSON
+          curl --fail-with-body --silent --show-error             "${GEMINI_API_URL}/chat/completions"             -H "Authorization: Bearer ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > response.json <<JSON
           {
             "model": "${GEMINI_MODEL}",
             "messages": [
@@ -53,14 +78,16 @@ jobs:
             "temperature": 0
           }
           JSON
-          grep -F '"LIVE_GEMINI_OK"' response.json
+          jq -e '.choices[0].message.content == "LIVE_GEMINI_OK"' response.json > /dev/null
 
       - name: Live Gemini tool-call probe
         if: steps.credential.outputs.configured == 'true'
+        env:
+          GEMINI_MODEL: ${{ steps.models.outputs.model }}
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error "${GEMINI_API_URL}/chat/completions" -H "Authorization: Bearer ${GEMINI_API_KEY}" -H "Content-Type: application/json" -d @- > tool-response.json <<JSON
+          curl --fail-with-body --silent --show-error             "${GEMINI_API_URL}/chat/completions"             -H "Authorization: Bearer ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > tool-response.json <<JSON
           {
             "model": "${GEMINI_MODEL}",
             "messages": [
