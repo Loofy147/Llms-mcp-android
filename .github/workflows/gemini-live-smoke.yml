@@ -1,0 +1,99 @@
+name: Gemini live smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - hackathon/apertus-personal-ai
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  gemini-live-smoke:
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: gemini-3.8-flash
+      GEMINI_API_URL: https://generativelanguage.googleapis.com/v1beta/openai
+    steps:
+      - name: Detect Gemini credential
+        id: credential
+        shell: bash
+        run: |
+          if [[ -z "${GEMINI_API_KEY}" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "GEMINI_API_KEY is not configured; skipping live inference."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Discover Gemini model API
+        if: steps.credential.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error             "https://generativelanguage.googleapis.com/v1beta/models"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             > models.json
+          jq -e --arg model "${GEMINI_MODEL}"             '.models[]?.name | endswith("/" + $model)'             models.json
+
+      - name: Live Gemini completion
+        if: steps.credential.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error             "${GEMINI_API_URL}/chat/completions"             -H "Authorization: Bearer ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > response.json <<JSON
+          {
+            "model": "${GEMINI_MODEL}",
+            "messages": [
+              {
+                "role": "user",
+                "content": "Reply with the exact marker LIVE_GEMINI_OK and nothing else."
+              }
+            ],
+            "temperature": 0
+          }
+          JSON
+          grep -F '"LIVE_GEMINI_OK"' response.json
+
+      - name: Live Gemini tool-call probe
+        if: steps.credential.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error             "${GEMINI_API_URL}/chat/completions"             -H "Authorization: Bearer ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > tool-response.json <<JSON
+          {
+            "model": "${GEMINI_MODEL}",
+            "messages": [
+              {
+                "role": "system",
+                "content": "When the remember tool is available, call it. Do not answer in plain text."
+              },
+              {
+                "role": "user",
+                "content": "Remember that gemini_smoke=ok."
+              }
+            ],
+            "tools": [
+              {
+                "type": "function",
+                "function": {
+                  "name": "remember",
+                  "description": "Persist a bounded local memory note.",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "key": {"type": "string"},
+                      "value": {"type": "string"}
+                    },
+                    "required": ["key", "value"],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            ],
+            "tool_choice": "auto",
+            "temperature": 0
+          }
+          JSON
+          jq -e '.choices[0].message.tool_calls | length >= 1' tool-response.json > /dev/null
+          jq -e '.choices[0].message.tool_calls[0].function.name == "remember"' tool-response.json > /dev/null
