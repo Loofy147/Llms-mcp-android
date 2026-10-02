@@ -17,16 +17,19 @@ jobs:
       NEBIUS_MODEL: nvidia/nvidia-nemotron-3-nano-30b-a3b
       NEBIUS_URL: https://api.tokenfactory.nebius.com/v1/chat/completions
     steps:
-      - name: Require configured Nebius credential
+      - name: Detect Nebius credential
+        id: credential
         shell: bash
         run: |
-          set -euo pipefail
           if [ -z "${NEBIUS_API_KEY:-}" ]; then
-            echo "NEBIUS_API_KEY is not configured as a repository secret."
-            exit 2
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "NEBIUS_API_KEY is not configured; live steps will be skipped."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Verify live Nemotron inference
+        if: steps.credential.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -42,6 +45,7 @@ jobs:
           echo "$response" | jq -e '.choices[0].message.content | contains("LIVE_NEMOTRON_OK")'
 
       - name: Verify forced tool calling
+        if: steps.credential.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
