@@ -39,10 +39,7 @@ jobs:
             .models[]?
             | select(.name | test("/gemini-"))
             | select((.supportedGenerationMethods // []) | index("generateContent") != null)
-            | [
-                .name,
-                (.supportedGenerationMethods // [] | join(","))
-              ]
+            | [.name, (.supportedGenerationMethods // [] | join(","))]
             | @tsv
           ' models.json | head -n 30
 
@@ -78,7 +75,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          http_code=$(curl --silent --show-error             -o response.json             -w '%{http_code}'             "${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- <<JSON
+          curl --silent --show-error             -o response.json             -w '%{http_code}'             "${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > status.txt <<JSON
           {
             "contents": [
               {
@@ -95,6 +92,7 @@ jobs:
             }
           }
           JSON
+          http_code=$(cat status.txt)
           echo "Gemini generateContent HTTP status: $http_code"
           if [[ "$http_code" != "200" ]]; then
             cat response.json
@@ -109,7 +107,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          http_code=$(curl --silent --show-error             -o tool-response.json             -w '%{http_code}'             "${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- <<JSON
+          curl --silent --show-error             -o tool-response.json             -w '%{http_code}'             "${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > tool-status.txt <<JSON
           {
             "contents": [
               {
@@ -150,6 +148,7 @@ jobs:
             }
           }
           JSON
+          http_code=$(cat tool-status.txt)
           echo "Gemini tool-call HTTP status: $http_code"
           if [[ "$http_code" != "200" ]]; then
             cat tool-response.json
