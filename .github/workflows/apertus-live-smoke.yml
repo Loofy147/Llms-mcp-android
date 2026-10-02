@@ -13,7 +13,7 @@ jobs:
   cscs-live-smoke:
     runs-on: ubuntu-latest
     env:
-      CSCS_INFERENCE_API_KEY: \${{ secrets.CSCS_INFERENCE_API_KEY }}
+      CSCS_INFERENCE_API_KEY: ${{ secrets.CSCS_INFERENCE_API_KEY }}
       CSCS_MODEL: swiss-ai/Apertus-v1.5-8B
       CSCS_API_URL: https://api.inference.cscs.ch/v1
     steps:
@@ -21,11 +21,11 @@ jobs:
         id: credential
         shell: bash
         run: |
-          if [[ -z "\${CSCS_INFERENCE_API_KEY}" ]]; then
-            echo "configured=false" >> "\$GITHUB_OUTPUT"
+          if [[ -z "${CSCS_INFERENCE_API_KEY}" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "CSCS_INFERENCE_API_KEY is not configured; skipping live inference."
           else
-            echo "configured=true" >> "\$GITHUB_OUTPUT"
+            echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Query available models
@@ -33,25 +33,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error \
-            "\${CSCS_API_URL}/models" \
-            -H "Authorization: Bearer \${CSCS_INFERENCE_API_KEY}" \
-            -H "Content-Type: application/json" \
-            > models.json
-          grep -F "\"\${CSCS_MODEL}\"" models.json
+          curl --fail-with-body --silent --show-error             "${CSCS_API_URL}/models"             -H "Authorization: Bearer ${CSCS_INFERENCE_API_KEY}"             -H "Content-Type: application/json"             > models.json
+          grep -F ""${CSCS_MODEL}"" models.json
 
       - name: Live Apertus inference
         if: steps.credential.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error \
-            "\${CSCS_API_URL}/chat/completions" \
-            -H "Authorization: Bearer \${CSCS_INFERENCE_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d @- > response.json <<JSON
+          curl --fail-with-body --silent --show-error             "${CSCS_API_URL}/chat/completions"             -H "Authorization: Bearer ${CSCS_INFERENCE_API_KEY}"             -H "Content-Type: application/json"             -d @- > response.json <<JSON
           {
-            "model": "\${CSCS_MODEL}",
+            "model": "${CSCS_MODEL}",
             "messages": [
               {
                 "role": "user",
@@ -68,13 +60,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error \
-            "\${CSCS_API_URL}/chat/completions" \
-            -H "Authorization: Bearer \${CSCS_INFERENCE_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d @- > tool-response.json <<JSON
+          curl --fail-with-body --silent --show-error             "${CSCS_API_URL}/chat/completions"             -H "Authorization: Bearer ${CSCS_INFERENCE_API_KEY}"             -H "Content-Type: application/json"             -d @- > tool-response.json <<JSON
           {
-            "model": "\${CSCS_MODEL}",
+            "model": "${CSCS_MODEL}",
             "messages": [
               {
                 "role": "system",
