@@ -33,15 +33,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error             "https://generativelanguage.googleapis.com/v1beta/models"             -H "x-goog-api-key: ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             > models.json
-          jq -e --arg model "${GEMINI_MODEL}"             '.models[]?.name | endswith("/" + $model)'             models.json
+          curl --fail-with-body --silent --show-error "https://generativelanguage.googleapis.com/v1beta/models" -H "x-goog-api-key: ${GEMINI_API_KEY}" -H "Content-Type: application/json" > models.json
+          jq -e --arg model "${GEMINI_MODEL}" '.models[]?.name | endswith("/" + $model)' models.json
 
       - name: Live Gemini completion
         if: steps.credential.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error             "${GEMINI_API_URL}/chat/completions"             -H "Authorization: Bearer ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > response.json <<JSON
+          curl --fail-with-body --silent --show-error "${GEMINI_API_URL}/chat/completions" -H "Authorization: Bearer ${GEMINI_API_KEY}" -H "Content-Type: application/json" -d @- > response.json <<JSON
           {
             "model": "${GEMINI_MODEL}",
             "messages": [
@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error             "${GEMINI_API_URL}/chat/completions"             -H "Authorization: Bearer ${GEMINI_API_KEY}"             -H "Content-Type: application/json"             -d @- > tool-response.json <<JSON
+          curl --fail-with-body --silent --show-error "${GEMINI_API_URL}/chat/completions" -H "Authorization: Bearer ${GEMINI_API_KEY}" -H "Content-Type: application/json" -d @- > tool-response.json <<JSON
           {
             "model": "${GEMINI_MODEL}",
             "messages": [
