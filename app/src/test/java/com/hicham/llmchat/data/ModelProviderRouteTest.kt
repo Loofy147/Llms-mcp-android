@@ -30,9 +30,27 @@ class ModelProviderRouteTest {
     }
 
     @Test
+    fun cscsPrefixSelectsCscsWithoutChangingModelId() {
+        assertEquals(
+            ModelProviderRoute(
+                ModelProviderRoute.Provider.CSCS,
+                "swiss-ai/Apertus-v1.5-8B"
+            ),
+            ModelProviderRoute.parse("cscs:swiss-ai/Apertus-v1.5-8B")
+        )
+    }
+
+    @Test
     fun blankNebiusModelIsRejected() {
         assertThrows(IllegalArgumentException::class.java) {
             ModelProviderRoute.parse("nebius:")
+        }
+    }
+
+    @Test
+    fun blankCscsModelIsRejected() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ModelProviderRoute.parse("cscs:")
         }
     }
 }
