@@ -9,7 +9,7 @@ import com.hicham.llmchat.runtime.EgressPolicy
 class GeminiModelProvider(
     context: Context,
     runtime: AgentRuntime,
-    egressPolicy: EgressPolicy,
+    private val egressPolicy: EgressPolicy,
     private val model: String
 ) : ModelProvider {
     private val settingsStore = SettingsStore(context.applicationContext)
