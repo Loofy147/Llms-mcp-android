@@ -8,8 +8,9 @@ import java.util.Locale
 object NativeActions {
     const val CURRENT_TIME = "native.current_time"
     const val CALCULATE = "native.calculate"
+    const val REMEMBER = "native.remember"
 
-    fun catalog(): List<ActionDefinition> = listOf(currentTime(), calculate())
+    fun catalog(): List<ActionDefinition> = listOf(currentTime(), calculate(), remember())
 
     private fun currentTime() = ActionDefinition(
         id = CURRENT_TIME,
@@ -32,7 +33,10 @@ object NativeActions {
             val result = results.single()
             ActionExecution(
                 output = result.output,
-                observations = result.observations + Observation("expression", input["expression"].orEmpty())
+                observations = result.observations + Observation(
+                    "expression",
+                    input["expression"].orEmpty()
+                )
             )
         },
         plan = { input ->
@@ -41,6 +45,40 @@ object NativeActions {
                     CapabilityInvocationSpec(
                         capabilityId = "device.calculator.evaluate",
                         parameters = mapOf("expression" to input["expression"].orEmpty())
+                    )
+                )
+            )
+        }
+    )
+
+    private fun remember() = ActionDefinition(
+        id = REMEMBER,
+        version = 1,
+        purpose = "Persist a bounded private user fact on the device.",
+        capabilities = listOf(
+            CapabilityDescriptor("memory.note.write", EffectClass.REVERSIBLE, scope = setOf("local.memory"))
+        ),
+        reduce = { input, results ->
+            val result = results.single()
+            ActionExecution(
+                output = result.output,
+                observations = result.observations + Observation(
+                    "memory_key",
+                    input["key"].orEmpty()
+                )
+            )
+        },
+        plan = { input ->
+            ActionPlan(
+                listOf(
+                    CapabilityInvocationSpec(
+                        capabilityId = "memory.note.write",
+                        scope = setOf("local.memory"),
+                        parameters = mapOf(
+                            "key" to input["key"].orEmpty(),
+                            "value" to input["value"].orEmpty()
+                        ),
+                        idempotencyKey = "memory:" + input["key"].orEmpty().trim()
                     )
                 )
             )

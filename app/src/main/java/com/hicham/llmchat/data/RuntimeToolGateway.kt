@@ -15,6 +15,7 @@ class RuntimeToolGateway(private val runtime: AgentRuntime) {
         val actionId = when (name) {
             "get_current_time" -> NativeActions.CURRENT_TIME
             "calculate" -> NativeActions.CALCULATE
+            "remember" -> NativeActions.REMEMBER
             else -> return "Error: unknown tool '$name'"
         }
 

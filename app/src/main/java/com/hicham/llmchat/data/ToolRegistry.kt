@@ -33,6 +33,24 @@ object ToolRegistry {
                 })
                 put("required", JSONArray().put("expression"))
             })
+        },
+        JSONObject().apply {
+            put("name", "remember")
+            put("description", "Persist a short private user fact locally on the device using a stable key.")
+            put("input_schema", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("key", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Stable fact name, e.g. preferred_language")
+                    })
+                    put("value", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Short fact value to remember")
+                    })
+                })
+                put("required", JSONArray().put("key").put("value"))
+            })
         }
     )
 }
