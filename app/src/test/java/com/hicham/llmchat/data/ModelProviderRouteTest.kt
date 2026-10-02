@@ -17,6 +17,17 @@ class ModelProviderRouteTest {
     }
 
     @Test
+    fun geminiPrefixSelectsGeminiWithoutChangingModelId() {
+        assertEquals(
+            ModelProviderRoute(
+                ModelProviderRoute.Provider.GEMINI,
+                "gemini-3.8-flash"
+            ),
+            ModelProviderRoute.parse("gemini:gemini-3.8-flash")
+        )
+    }
+
+    @Test
     fun nebiusPrefixSelectsNebiusWithoutChangingModelId() {
         assertEquals(
             ModelProviderRoute(
@@ -38,6 +49,13 @@ class ModelProviderRouteTest {
             ),
             ModelProviderRoute.parse("cscs:swiss-ai/Apertus-v1.5-8B")
         )
+    }
+
+    @Test
+    fun blankGeminiModelIsRejected() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ModelProviderRoute.parse("gemini:")
+        }
     }
 
     @Test
