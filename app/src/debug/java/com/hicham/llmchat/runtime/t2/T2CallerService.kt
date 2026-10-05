@@ -67,13 +67,7 @@ class T2CallerService : Service() {
                 ?: throw IllegalStateException("Effect is not UNKNOWN after recovery: $operationId")
 
             val providerState = withProvider { provider ->
-                try {
-                    provider.getState(operationId)
-                } catch (error: IllegalArgumentException) {
-                    null
-                } catch (error: RemoteException) {
-                    throw error
-                }
+                provider.getState(operationId).takeUnless { it == "ABSENT" }
             }
 
             return if (
