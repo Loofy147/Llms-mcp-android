@@ -5,4 +5,5 @@ interface IT2Caller {
     void startB4(String operationId);
     void startB5(String operationId);
     String recover(String operationId);
+    String getProcessInstanceId();
 }
