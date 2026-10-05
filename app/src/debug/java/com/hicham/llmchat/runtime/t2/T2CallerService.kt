@@ -10,10 +10,12 @@ import android.os.Process
 import android.os.RemoteException
 import java.io.File
 import java.util.concurrent.CountDownLatch
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class T2CallerService : Service() {
     private lateinit var store: JournalRuntimeStore
+    private val processInstanceId = UUID.randomUUID().toString()
 
     override fun onCreate() {
         super.onCreate()
@@ -50,6 +52,8 @@ class T2CallerService : Service() {
 
             Process.killProcess(Process.myPid())
         }
+
+        override fun getProcessInstanceId(): String = processInstanceId
 
         override fun recover(operationId: String): String {
             store.recoverInterruptedEffects()
