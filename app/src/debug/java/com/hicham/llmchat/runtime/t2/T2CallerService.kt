@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
 
 class T2CallerService : Service() {
     private lateinit var store: JournalRuntimeStore
-    private val processInstanceId = UUID.randomUUID().toString()
+    private val callerProcessInstanceId = UUID.randomUUID().toString()
 
     override fun onCreate() {
         super.onCreate()
@@ -59,7 +59,7 @@ class T2CallerService : Service() {
             Process.killProcess(Process.myPid())
         }
 
-        override fun getProcessInstanceId(): String = processInstanceId
+        override fun getProcessInstanceId(): String = callerProcessInstanceId
 
         override fun recover(operationId: String): String {
             store.recoverInterruptedEffects()
