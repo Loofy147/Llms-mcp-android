@@ -45,11 +45,11 @@ class CallerRecoveryTest {
 
             val result = recovered.recover(operationId)
             assertTrue("caller=COMPLETED", result.contains("caller=COMPLETED"))
-            assertTrue(result.contains("decision=CONFIRMED_COMPLETED"), result)
-            assertTrue(result.contains("provider=COMPLETED"), result)
-            assertTrue(result.contains("requests=1"), result)
-            assertTrue(result.contains("effects=1"), result)
-            assertTrue(result.contains("replay=false"), result)
+            assertTrue(result, result.contains("decision=CONFIRMED_COMPLETED"))
+            assertTrue(result, result.contains("provider=COMPLETED"))
+            assertTrue(result, result.contains("requests=1"))
+            assertTrue(result, result.contains("effects=1"))
+            assertTrue(result, result.contains("replay=false"))
         } finally {
             unbindCaller()
         }
@@ -79,11 +79,11 @@ class CallerRecoveryTest {
 
             val result = recovered.recover(operationId)
             assertTrue("caller=COMPLETED", result.contains("caller=COMPLETED"))
-            assertTrue(result.contains("decision=CONFIRMED_NOT_EXECUTED"), result)
-            assertTrue(result.contains("provider=COMPLETED"), result)
-            assertTrue(result.contains("requests=1"), result)
-            assertTrue(result.contains("effects=1"), result)
-            assertTrue(result.contains("replay=true"), result)
+            assertTrue(result, result.contains("decision=CONFIRMED_NOT_EXECUTED"))
+            assertTrue(result, result.contains("provider=COMPLETED"))
+            assertTrue(result, result.contains("requests=1"))
+            assertTrue(result, result.contains("effects=1"))
+            assertTrue(result, result.contains("replay=true"))
         } finally {
             unbindCaller()
         }
