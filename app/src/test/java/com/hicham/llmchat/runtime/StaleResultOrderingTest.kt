@@ -30,6 +30,24 @@ class StaleResultOrderingTest {
     )
 
     @Test
+    fun terminalRunIsWriteOnceEvenWhenLateResultHasSameStatus() {
+        val journal = File.createTempFile("b7-terminal-immutable", ".journal")
+        journal.deleteOnExit()
+
+        val store = JournalRuntimeStore(journal)
+        val runId = "run-b7-terminal"
+        val first = run(runId, RunStatus.SUCCEEDED, "authoritative")
+        val late = run(runId, RunStatus.SUCCEEDED, "stale")
+
+        store.saveRun(first)
+        store.saveRun(late)
+
+        val loaded = JournalRuntimeStore(journal).loadRun(runId, ActionCatalog(listOf(action())))
+        assertEquals("authoritative", loaded?.output?.get("value"))
+        assertEquals(RunStatus.SUCCEEDED, loaded?.status)
+    }
+
+    @Test
     fun lateOlderResultMustNotRegressNewerTerminalRun() {
         val journal = File.createTempFile("b7-stale", ".journal")
         journal.deleteOnExit()
