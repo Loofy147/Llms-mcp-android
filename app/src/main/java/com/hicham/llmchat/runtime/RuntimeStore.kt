@@ -24,6 +24,13 @@ enum class EffectReconciliationDecision { CONFIRMED_COMPLETED, CONFIRMED_NOT_EXE
 enum class EffectReconciliationResult { RECONCILED, NOT_FOUND, NOT_UNKNOWN }
 enum class EffectStatus { RESERVED, COMPLETED, UNKNOWN, CONFIRMED_NOT_EXECUTED }
 
+private fun RunStatus.isTerminal(): Boolean = this in setOf(
+    RunStatus.SUCCEEDED,
+    RunStatus.FAILED,
+    RunStatus.DENIED,
+    RunStatus.CANCELLED,
+)
+
 data class EffectRecord(
     val effectId: String,
     val runId: String,
@@ -56,7 +63,10 @@ private data class StoredEffect(
 class InMemoryRuntimeStore : RuntimeStore {
     private val runs = linkedMapOf<String, Run>()
     private val effects = linkedMapOf<String, StoredEffect>()
-    @Synchronized override fun saveRun(run: Run) { runs[run.id] = run }
+    @Synchronized override fun saveRun(run: Run) {
+        if (runs[run.id]?.status?.isTerminal() == true) return
+        runs[run.id] = run
+    }
     @Synchronized override fun loadRun(runId: String, catalog: ActionCatalog): Run? = runs[runId]
     @Synchronized override fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation {
         if (invocations.map { it.effectId }.distinct().size != invocations.size) return EffectReservation.CONFLICT
@@ -86,7 +96,10 @@ class InMemoryRuntimeStore : RuntimeStore {
 class JournalRuntimeStore(private val file: File) : RuntimeStore {
     private val lock = Any()
     init { file.parentFile?.mkdirs(); if (!file.exists()) file.createNewFile() }
-    override fun saveRun(run: Run) = synchronized(lock) { append(RunRecord.encode(run)) }
+    override fun saveRun(run: Run) = synchronized(lock) {
+        if (replay().runs[run.id]?.status?.isTerminal() == true) return@synchronized
+        append(RunRecord.encode(run))
+    }
     override fun loadRun(runId: String, catalog: ActionCatalog): Run? = synchronized(lock) { replay().runs[runId]?.toRun(catalog) }
     override fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation = synchronized(lock) {
         if (invocations.map { it.effectId }.distinct().size != invocations.size) return@synchronized EffectReservation.CONFLICT
