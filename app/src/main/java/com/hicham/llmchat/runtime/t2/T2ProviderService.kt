@@ -26,6 +26,7 @@ class T2ProviderService : Service() {
     private val binder = object : IT2Provider.Stub() {
         override fun execute(operationId: String, faultMode: Int) {
             val received = store.receive(operationId)
+            store.recordRequest(operationId)
             if (faultMode == DIE_AFTER_RECEIVED) {
                 Process.killProcess(Process.myPid())
                 return
@@ -56,6 +57,9 @@ class T2ProviderService : Service() {
 
         override fun getEffectCount(operationId: String): Int =
             requireNotNull(store.get(operationId)).effectCount
+
+        override fun getRequestCount(operationId: String): Int =
+            requireNotNull(store.get(operationId)).requestCount
 
         override fun getPid(): Int = Process.myPid()
 
