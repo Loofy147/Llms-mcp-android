@@ -3,6 +3,7 @@
     <application>
         <service
             android:name=".runtime.t2.T2CallerService"
-            android:exported="false" />
+            android:exported="false"
+            android:process=":t2caller" />
     </application>
 </manifest>
