@@ -56,6 +56,9 @@ class BinderFailureInjectionTest {
             stage("recovered.getEffectCount.before_reconcile") {
                 assertEquals(1, recovered.getEffectCount(operationId))
             }
+            stage("recovered.getRequestCount.before_reconcile") {
+                assertEquals(1, recovered.getRequestCount(operationId))
+            }
 
             stage("recovered.reconcile") {
                 recovered.reconcile(operationId)
@@ -69,6 +72,13 @@ class BinderFailureInjectionTest {
                     "Reconciliation must not execute the effect again",
                     1,
                     recovered.getEffectCount(operationId),
+                )
+            }
+            stage("recovered.getRequestCount.after_reconcile") {
+                assertEquals(
+                    "Reconciliation must not redispatch the provider operation",
+                    1,
+                    recovered.getRequestCount(operationId),
                 )
             }
         } finally {
@@ -109,6 +119,9 @@ class BinderFailureInjectionTest {
             stage("recovered.getEffectCount.before_retry") {
                 assertEquals(0, recovered.getEffectCount(operationId))
             }
+            stage("recovered.getRequestCount.before_retry") {
+                assertEquals(1, recovered.getRequestCount(operationId))
+            }
 
             stage("recovered.execute.NO_FAILURE") {
                 recovered.execute(operationId, T2ProviderService.NO_FAILURE)
@@ -119,6 +132,9 @@ class BinderFailureInjectionTest {
             }
             stage("recovered.getEffectCount.after_execute") {
                 assertEquals(1, recovered.getEffectCount(operationId))
+            }
+            stage("recovered.getRequestCount.after_execute") {
+                assertEquals(2, recovered.getRequestCount(operationId))
             }
         } finally {
             stage("unbind.after_recovery") { unbind() }
