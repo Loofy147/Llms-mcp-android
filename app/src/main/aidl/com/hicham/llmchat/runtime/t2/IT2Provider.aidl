@@ -5,6 +5,7 @@ interface IT2Provider {
     void reconcile(String operationId);
     String getState(String operationId);
     int getEffectCount(String operationId);
+    int getRequestCount(String operationId);
     int getPid();
     String getProcessInstanceId();
 }
