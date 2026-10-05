@@ -15,6 +15,7 @@ internal enum class T2OperationState {
 internal data class T2Operation(
     val state: T2OperationState,
     val effectCount: Int,
+    val requestCount: Int,
 )
 
 internal class T2ProviderStore(context: Context) {
@@ -28,9 +29,17 @@ internal class T2ProviderStore(context: Context) {
     fun receive(operationId: String): T2Operation {
         val current = read(operationId)
         if (current != null) return current
-        val created = T2Operation(T2OperationState.RECEIVED, 0)
+        val created = T2Operation(T2OperationState.RECEIVED, 0, 0)
         write(operationId, created)
         return created
+    }
+
+    @Synchronized
+    fun recordRequest(operationId: String): T2Operation {
+        val current = requireOperation(operationId)
+        val next = current.copy(requestCount = current.requestCount + 1)
+        write(operationId, next)
+        return next
     }
 
     @Synchronized
@@ -38,7 +47,10 @@ internal class T2ProviderStore(context: Context) {
         val current = requireOperation(operationId)
         return when (current.state) {
             T2OperationState.RECEIVED -> {
-                val next = T2Operation(T2OperationState.EFFECT_APPLIED, 1)
+                val next = current.copy(
+                    state = T2OperationState.EFFECT_APPLIED,
+                    effectCount = current.effectCount + 1,
+                )
                 write(operationId, next)
                 next
             }
@@ -51,7 +63,7 @@ internal class T2ProviderStore(context: Context) {
     fun complete(operationId: String): T2Operation {
         val current = requireOperation(operationId)
         if (current.state == T2OperationState.COMPLETED) return current
-        val next = T2Operation(T2OperationState.COMPLETED, current.effectCount)
+        val next = current.copy(state = T2OperationState.COMPLETED)
         write(operationId, next)
         return next
     }
@@ -72,7 +84,8 @@ internal class T2ProviderStore(context: Context) {
         FileInputStream(file).use { properties.load(it) }
         return T2Operation(
             state = T2OperationState.valueOf(properties.getProperty("state")),
-            effectCount = properties.getProperty("effect_count").toInt(),
+            effectCount = properties.getProperty("effect_count", "0").toInt(),
+            requestCount = properties.getProperty("request_count", "0").toInt(),
         )
     }
 
@@ -82,6 +95,7 @@ internal class T2ProviderStore(context: Context) {
         val properties = Properties().apply {
             setProperty("state", operation.state.name)
             setProperty("effect_count", operation.effectCount.toString())
+            setProperty("request_count", operation.requestCount.toString())
         }
 
         FileOutputStream(temp).use { output ->
