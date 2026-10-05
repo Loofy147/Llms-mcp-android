@@ -53,7 +53,7 @@ class T2ProviderService : Service() {
         }
 
         override fun getState(operationId: String): String =
-            requireNotNull(store.get(operationId)).state.name
+            store.get(operationId)?.state?.name ?: "ABSENT"
 
         override fun getEffectCount(operationId: String): Int =
             requireNotNull(store.get(operationId)).effectCount
