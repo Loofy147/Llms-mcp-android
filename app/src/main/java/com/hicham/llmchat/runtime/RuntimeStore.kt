@@ -170,6 +170,7 @@ private data class StoredEffect(
                         attributedTo = Codec.decode(parts[7]),
                         parameters = parameters,
                         attemptId = legacyAttemptId,
+                        attemptNumber = 1,
                         parametersDigest = canonicalParametersDigest(parameters),
                         status = EffectStatus.valueOf(parts[9])
                     )
@@ -223,6 +224,7 @@ private fun legalDirectEffectTransition(previous: EffectStatus, next: EffectStat
 class InMemoryRuntimeStore : RuntimeStore {
     private val runs = linkedMapOf<String, Run>()
     private val effects = linkedMapOf<String, StoredEffect>()
+    private val usedAttemptIds = linkedMapOf<String, MutableSet<String>>()
 
     @Synchronized override fun saveRun(run: Run) { runs[run.id] = run }
     @Synchronized override fun loadRun(runId: String, catalog: ActionCatalog): Run? = runs[runId]
@@ -233,13 +235,26 @@ class InMemoryRuntimeStore : RuntimeStore {
         if (incoming.any { !it.hasValidIdentity() }) return EffectReservation.CONFLICT
 
         for (candidate in incoming) {
-            val current = effects[candidate.effectId] ?: continue
+            val current = effects[candidate.effectId]
+            if (current == null) {
+                if (candidate.attemptNumber != 1) return EffectReservation.CONFLICT
+                if (usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
+                    return EffectReservation.CONFLICT
+                }
+                continue
+            }
             if (!current.compatibleWith(candidate)) return EffectReservation.CONFLICT
             if (current.status != EffectStatus.CONFIRMED_NOT_EXECUTED) return EffectReservation.REPLAY_BLOCKED
-            if (current.attemptId == candidate.attemptId) return EffectReservation.CONFLICT
+            if (candidate.attemptNumber != current.attemptNumber + 1) return EffectReservation.CONFLICT
+            if (usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
+                return EffectReservation.CONFLICT
+            }
         }
 
-        incoming.forEach { effects[it.effectId] = it }
+        incoming.forEach {
+            effects[it.effectId] = it
+            usedAttemptIds.getOrPut(it.effectId) { linkedSetOf() }.add(it.attemptId)
+        }
         return EffectReservation.RESERVED
     }
 
@@ -265,6 +280,9 @@ class InMemoryRuntimeStore : RuntimeStore {
         effects[effectId] = current.copy(status = decision.toStatus())
         return EffectReconciliationResult.RECONCILED
     }
+
+    @Synchronized override fun currentEffect(effectId: String): EffectRecord? =
+        effects[effectId]?.record()
 
     @Synchronized override fun unknownEffects(): List<EffectRecord> =
         effects.values.filter { it.status == EffectStatus.UNKNOWN }.map { it.record() }
@@ -306,12 +324,24 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
         if (incoming.any { !it.hasValidIdentity() }) return@synchronized EffectReservation.CONFLICT
 
         for (candidate in incoming) {
-            val current = state.effects[candidate.effectId] ?: continue
+            val current = state.effects[candidate.effectId]
+            if (current == null) {
+                if (candidate.attemptNumber != 1) return@synchronized EffectReservation.CONFLICT
+                if (state.usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
+                    return@synchronized EffectReservation.CONFLICT
+                }
+                continue
+            }
             if (!current.compatibleWith(candidate)) return@synchronized EffectReservation.CONFLICT
             if (current.status != EffectStatus.CONFIRMED_NOT_EXECUTED) {
                 return@synchronized EffectReservation.REPLAY_BLOCKED
             }
-            if (current.attemptId == candidate.attemptId) return@synchronized EffectReservation.CONFLICT
+            if (candidate.attemptNumber != current.attemptNumber + 1) {
+                return@synchronized EffectReservation.CONFLICT
+            }
+            if (state.usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
+                return@synchronized EffectReservation.CONFLICT
+            }
         }
 
         incoming.forEach { append(it.encode()) }
@@ -341,6 +371,10 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
         if (current.status != EffectStatus.UNKNOWN) return@synchronized EffectReconciliationResult.NOT_UNKNOWN
         append("X|${Codec.encode(effectId)}|${decision.toStatus().name}")
         EffectReconciliationResult.RECONCILED
+    }
+
+    override fun currentEffect(effectId: String): EffectRecord? = synchronized(lock) {
+        replay().effects[effectId]?.record()
     }
 
     override fun unknownEffects(): List<EffectRecord> = synchronized(lock) {
@@ -373,6 +407,7 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
 
         val runs = linkedMapOf<String, RunRecord>()
         val effects = linkedMapOf<String, StoredEffect>()
+        val usedAttemptIds = linkedMapOf<String, MutableSet<String>>()
         val text = String(bytes, StandardCharsets.UTF_8)
         val lines = text.split('\n')
         val recordLines = if (lines.lastOrNull() == "") lines.dropLast(1) else lines
@@ -388,25 +423,34 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
                         ?: throw IllegalStateException("malformed run record at line ${index + 1}")
                     runs[run.id] = run
                 }
-                "E", "E2" -> {
-                    val effect = StoredEffect.decode(parts, "legacy-attempt-${index + 1}")
+                "E", "E2", "E3" -> {
+                    val decoded = StoredEffect.decode(parts, "legacy-attempt-${index + 1}")
                         ?: throw IllegalStateException("malformed effect record at line ${index + 1}")
+                    val previous = effects[decoded.effectId]
+                    val effect = if (parts[0] == "E3") decoded else decoded.copy(
+                        attemptNumber = (previous?.attemptNumber ?: 0) + 1
+                    )
                     if (!effect.hasValidIdentity() || effect.status != EffectStatus.RESERVED) {
                         throw IllegalStateException("invalid effect reservation at line ${index + 1}")
                     }
 
-                    val previous = effects[effect.effectId]
-                    if (previous == null) {
-                        effects[effect.effectId] = effect
-                    } else {
-                        if (!previous.compatibleWith(effect) ||
-                            previous.status != EffectStatus.CONFIRMED_NOT_EXECUTED ||
-                            previous.attemptId == effect.attemptId
-                        ) {
-                            throw IllegalStateException("illegal effect reservation at line ${index + 1}")
-                        }
-                        effects[effect.effectId] = effect
+                    val seenAttempts = usedAttemptIds.getOrPut(effect.effectId) { linkedSetOf() }
+                    if (effect.attemptId in seenAttempts) {
+                        throw IllegalStateException("reused effect attempt ID at line ${index + 1}")
                     }
+                    if (previous == null) {
+                        if (effect.attemptNumber != 1) {
+                            throw IllegalStateException("first effect attempt must be number 1 at line ${index + 1}")
+                        }
+                    } else if (
+                        !previous.compatibleWith(effect) ||
+                        previous.status != EffectStatus.CONFIRMED_NOT_EXECUTED ||
+                        effect.attemptNumber != previous.attemptNumber + 1
+                    ) {
+                        throw IllegalStateException("illegal effect reservation at line ${index + 1}")
+                    }
+                    seenAttempts.add(effect.attemptId)
+                    effects[effect.effectId] = effect
                 }
                 "X" -> {
                     if (parts.size != 3) {
@@ -428,12 +472,13 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
                 else -> throw IllegalStateException("unknown journal record type at line ${index + 1}")
             }
         }
-        return State(runs, effects)
+        return State(runs, effects, usedAttemptIds)
     }
 
     private data class State(
         val runs: MutableMap<String, RunRecord>,
-        val effects: MutableMap<String, StoredEffect>
+        val effects: MutableMap<String, StoredEffect>,
+        val usedAttemptIds: MutableMap<String, MutableSet<String>>
     )
 }
 
@@ -568,14 +613,15 @@ private object Codec {
                 encodeSet(invocation.scope),
                 encode(invocation.attributedTo),
                 encodeMap(invocation.parameters),
-                encode(invocation.attemptId)
+                encode(invocation.attemptId),
+                invocation.attemptNumber.toString()
             ).joinToString("^")
         }
 
     fun decodeInvocations(value: String): List<CapabilityInvocation> =
         if (value.isBlank()) emptyList() else value.split('~').map { raw ->
             val parts = raw.split('^')
-            require(parts.size == 9 || parts.size == 10)
+            require(parts.size == 9 || parts.size == 10 || parts.size == 11)
             CapabilityInvocation(
                 id = decode(parts[0]),
                 runId = decode(parts[1]),
@@ -586,7 +632,8 @@ private object Codec {
                 scope = decodeSet(parts[6]),
                 attributedTo = decode(parts[7]),
                 parameters = decodeMap(parts[8]),
-                attemptId = if (parts.size == 10) decode(parts[9]) else decode(parts[0])
+                attemptId = if (parts.size >= 10) decode(parts[9]) else decode(parts[0]),
+                attemptNumber = if (parts.size == 11) parts[10].toInt() else 1
             )
         }
 
