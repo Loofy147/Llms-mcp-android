@@ -81,7 +81,7 @@ class ControlPlaneGateTest {
 
         assertEquals(EffectReservation.RESERVED, JournalRuntimeStore(journal, testAttestationVerifier).reserveEffects(listOf(invocation)))
 
-        val restartedStore = JournalRuntimeStore(journal)
+        val restartedStore = JournalRuntimeStore(journal, testAttestationVerifier)
         assertEquals(1, restartedStore.recoverInterruptedEffects())
         assertEquals(EffectStatus.UNKNOWN, restartedStore.unknownEffects().single().status)
         assertEquals(
