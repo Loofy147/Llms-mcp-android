@@ -425,9 +425,9 @@ class UnknownEffectReconciliationTest {
             val operation = step.get("op").asString
             val actualResult = when (operation) {
                 "reserve" -> store.reserveEffects(listOf(invocation)).name
-                "mark_unknown" -> when (store.markEffectUnknown(effectId)) {
-                    EffectTransitionResult.APPLIED -> "UNKNOWN"
-                    else -> store.markEffectUnknown(effectId).name
+                "mark_unknown" -> {
+                    val transition = store.markEffectUnknown(effectId)
+                    if (transition == EffectTransitionResult.APPLIED) "UNKNOWN" else transition.name
                 }
                 "reconcile" -> {
                     val decision = EffectReconciliationDecision.valueOf(step.get("decision").asString)
