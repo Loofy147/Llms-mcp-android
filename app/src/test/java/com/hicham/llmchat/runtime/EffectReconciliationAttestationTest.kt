@@ -5,6 +5,7 @@ import java.util.Base64
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -106,6 +107,110 @@ class EffectReconciliationAttestationTest {
     private fun markUnknown(store: RuntimeStore, effect: CapabilityInvocation) {
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(effect.effectId))
+    }
+
+    @Test
+    fun crossRuntimeAttestationCanonicalizationMatchesGoldenVector() {
+        val stream = requireNotNull(
+            javaClass.classLoader?.getResourceAsStream(
+                "effect-attestation-canonicalization-v0.1.json"
+            )
+        )
+        val root = JsonParser.parseString(
+            stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        ).asJsonObject
+        val source = root.getAsJsonObject("attestation")
+        val identity = source.getAsJsonObject("effect_identity")
+        val authority = source.getAsJsonObject("authority")
+        val evidence = source.getAsJsonObject("evidence")
+        val verifier = source.getAsJsonObject("verifier")
+        val principal = source.getAsJsonObject("accountable_principal")
+        val authentication = source.getAsJsonObject("authentication")
+
+        val attestation = EffectReconciliationAttestation(
+            schema = source.get("schema").asString,
+            effectIdentity = EffectIdentityAttestation(
+                schema = identity.get("schema").asString,
+                effectId = identity.get("effect_id").asString,
+                runId = identity.get("run_id").asString,
+                capabilityId = identity.get("capability_id").asString,
+                actionId = identity.get("action_id").asString,
+                actionVersion = identity.get("action_version").asInt,
+                scope = identity.getAsJsonArray("scope").map { it.asString }.toSet(),
+                attributedTo = identity.get("attributed_to").asString,
+                parametersDigest = identity.get("parameters_digest").asString
+            ),
+            attemptId = source.get("attempt_id").asString,
+            attemptNumber = source.get("attempt_number").asInt,
+            decision = EffectReconciliationDecision.valueOf(source.get("decision").asString),
+            decidedAt = source.get("decided_at").asString,
+            authority = EffectReconciliationAuthority(
+                kind = authority.get("kind").asString,
+                ref = authority.get("ref").asString,
+                observationRef = authority.get("observation_ref").asString,
+                queriedAt = authority.get("queried_at").asString,
+                observedAt = authority.get("observed_at").asString
+            ),
+            evidence = EffectReconciliationEvidence(
+                artifactRef = evidence.get("artifact_ref").asString,
+                digest = evidence.get("digest").asString
+            ),
+            verifier = EffectReconciliationVerifierEvidence(
+                ref = verifier.get("ref").asString,
+                version = verifier.get("version").asString,
+                result = verifier.get("result").asString,
+                verifiedAt = verifier.get("verified_at").asString
+            ),
+            accountablePrincipal = EffectAccountablePrincipal(
+                kind = principal.get("kind").asString,
+                ref = principal.get("ref").asString
+            ),
+            authentication = EffectAttestationAuthentication(
+                scheme = authentication.get("scheme").asString,
+                keyRef = authentication.get("key_ref").asString,
+                signedDigest = authentication.get("signed_digest").asString,
+                signature = authentication.get("signature").asString
+            ),
+            reason = source.get("reason").asString
+        )
+
+        val expected = root.getAsJsonObject("expected")
+        val preimage = effectReconciliationAttestationSignaturePreimageBytes(attestation)
+        val canonical = effectReconciliationAttestationCanonicalBytes(attestation)
+        assertEquals(expected.get("signature_preimage_byte_length").asInt, preimage.size)
+        assertEquals(expected.get("attestation_byte_length").asInt, canonical.size)
+        assertEquals(
+            expected.get("signature_preimage_sha256").asString,
+            effectReconciliationAttestationSignaturePreimageDigest(attestation)
+        )
+        assertEquals(
+            expected.get("attestation_sha256").asString,
+            effectReconciliationAttestationDigest(attestation)
+        )
+        assertEquals(
+            expected.get("signature_preimage_sha256").asString,
+            attestation.authentication.signedDigest
+        )
+    }
+
+    @Test
+    fun canonicalAttestationScopeUsesUtf8ByteOrdering() {
+        val original = attestation(invocation())
+        val values = listOf("z", "é", "e\u0301", "a")
+        val left = original.copy(
+            effectIdentity = original.effectIdentity.copy(scope = values.toSet())
+        )
+        val right = original.copy(
+            effectIdentity = original.effectIdentity.copy(scope = values.reversed().toSet())
+        )
+        assertEquals(
+            effectReconciliationAttestationDigest(left),
+            effectReconciliationAttestationDigest(right)
+        )
+        assertEquals(
+            effectReconciliationAttestationSignaturePreimageDigest(left),
+            effectReconciliationAttestationSignaturePreimageDigest(right)
+        )
     }
 
     @Test
