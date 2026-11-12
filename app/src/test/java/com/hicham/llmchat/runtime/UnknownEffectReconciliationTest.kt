@@ -319,4 +319,20 @@ class UnknownEffectReconciliationTest {
         )
     }
 
+
+    @Test
+    fun parameterDigestUsesUnsignedUtf8KeyOrdering() {
+        val store = InMemoryRuntimeStore()
+        val effect = invocation().copy(
+            parameters = mapOf("\uE000" to "bmp", "\uD83D\uDE00" to "astral")
+        )
+
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
+        assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(effect.effectId))
+        assertEquals(
+            "sha256:f9e5a1137f80ad7a067063f2b8adb0aea997147ec903dc58af105e91a8de64ec",
+            store.unknownEffects().single().parametersDigest
+        )
+    }
+
 }
