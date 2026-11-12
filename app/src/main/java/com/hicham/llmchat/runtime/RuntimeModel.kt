@@ -30,7 +30,9 @@ data class CapabilityInvocation(
     val effectId: String = UUID.randomUUID().toString(),
     val scope: Set<String> = emptySet(),
     val attributedTo: String,
-    val parameters: Map<String, String> = emptyMap()
+    val parameters: Map<String, String> = emptyMap(),
+    /** A distinct execution attempt; a confirmed-absent retry must use a new value. */
+    val attemptId: String = UUID.randomUUID().toString()
 )
 
 data class CapabilityInvocationSpec(
