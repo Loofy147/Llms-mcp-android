@@ -174,11 +174,16 @@ private data class StoredEffect(
     }
 }
 
+/** Event-log transitions include reconciliation; direct API calls are narrower. */
 private fun legalEffectTransition(previous: EffectStatus, next: EffectStatus): Boolean = when (previous) {
     EffectStatus.RESERVED -> next == EffectStatus.COMPLETED || next == EffectStatus.UNKNOWN
     EffectStatus.UNKNOWN -> next == EffectStatus.COMPLETED || next == EffectStatus.CONFIRMED_NOT_EXECUTED
     EffectStatus.COMPLETED, EffectStatus.CONFIRMED_NOT_EXECUTED -> false
 }
+
+private fun legalDirectEffectTransition(previous: EffectStatus, next: EffectStatus): Boolean =
+    previous == EffectStatus.RESERVED &&
+        (next == EffectStatus.COMPLETED || next == EffectStatus.UNKNOWN)
 
 /** A local store with the same legal-transition reducer as the journal store. */
 class InMemoryRuntimeStore : RuntimeStore {
@@ -212,7 +217,7 @@ class InMemoryRuntimeStore : RuntimeStore {
 
     private fun transition(effectId: String, next: EffectStatus): EffectTransitionResult {
         val current = effects[effectId] ?: return EffectTransitionResult.NOT_FOUND
-        if (!legalEffectTransition(current.status, next)) return EffectTransitionResult.INVALID_TRANSITION
+        if (!legalDirectEffectTransition(current.status, next)) return EffectTransitionResult.INVALID_TRANSITION
         effects[effectId] = current.copy(status = next)
         return EffectTransitionResult.APPLIED
     }
