@@ -294,7 +294,7 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
 
     private fun transition(effectId: String, next: EffectStatus): EffectTransitionResult {
         val current = replay().effects[effectId] ?: return EffectTransitionResult.NOT_FOUND
-        if (!legalEffectTransition(current.status, next)) return EffectTransitionResult.INVALID_TRANSITION
+        if (!legalDirectEffectTransition(current.status, next)) return EffectTransitionResult.INVALID_TRANSITION
         append("X|${Codec.encode(effectId)}|${next.name}")
         return EffectTransitionResult.APPLIED
     }
