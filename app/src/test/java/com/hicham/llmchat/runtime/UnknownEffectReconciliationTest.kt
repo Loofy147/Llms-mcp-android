@@ -23,6 +23,80 @@ class UnknownEffectReconciliationTest {
         parameters = mapOf("message" to "hello")
     )
 
+    private fun attestation(
+        effect: CapabilityInvocation,
+        decision: EffectReconciliationDecision
+    ) = EffectReconciliationAttestation(
+        schema = "open_system_one.effect_reconciliation_attestation.v0.1",
+        effectIdentity = EffectIdentityAttestation(
+            schema = "open_system_one.effect_identity.v0.1",
+            effectId = effect.effectId,
+            runId = effect.runId,
+            capabilityId = effect.capabilityId,
+            actionId = effect.actionId,
+            actionVersion = effect.actionVersion,
+            scope = effect.scope,
+            attributedTo = effect.attributedTo,
+            parametersDigest = canonicalEffectParametersDigest(effect.parameters)
+        ),
+        attemptId = effect.attemptId,
+        attemptNumber = effect.attemptNumber,
+        decision = decision,
+        decidedAt = "2026-11-12T12:01:00Z",
+        authority = EffectReconciliationAuthority(
+            kind = "synthetic_fixture",
+            ref = "authority:fixture-v1",
+            observationRef = "observation:${effect.effectId}",
+            queriedAt = "2026-11-12T12:00:30Z",
+            observedAt = "2026-11-12T12:00:31Z"
+        ),
+        evidence = EffectReconciliationEvidence(
+            artifactRef = "artifact:synthetic:${effect.effectId}",
+            digest = "sha256:" + "b".repeat(64)
+        ),
+        verifier = EffectReconciliationVerifierEvidence(
+            ref = "verifier:fixture-v1",
+            version = "1.0.0",
+            result = if (decision == EffectReconciliationDecision.UNRESOLVED) "INCONCLUSIVE" else "PASS",
+            verifiedAt = "2026-11-12T12:00:50Z"
+        ),
+        accountablePrincipal = EffectAccountablePrincipal(
+            kind = "service",
+            ref = "service:conformance-fixture"
+        ),
+        authentication = EffectAttestationAuthentication(
+            scheme = "ed25519",
+            keyRef = "key:synthetic-fixture",
+            signedDigest = "sha256:" + "e".repeat(64),
+            signature = "synthetic-fixture-signature"
+        ),
+        reason = "Synthetic conformance record; not provider evidence."
+    )
+
+    private val syntheticTrustVerifier = ReconciliationTrustVerifier { evidence, _ ->
+        val digest = effectReconciliationAttestationDigest(evidence)
+        TrustVerificationResult(
+            attestationRef = "synthetic-fixture:$digest",
+            attestationDigest = digest,
+            trustPolicyRef = "synthetic-fixture-policy:v1",
+            signatureValid = true,
+            authorityApplicable = true,
+            evidenceDigestVerified = true,
+            verifierPolicyValid = true,
+            principalAuthorized = true
+        )
+    }
+
+    private fun reconcile(
+        store: RuntimeStore,
+        effect: CapabilityInvocation,
+        decision: EffectReconciliationDecision
+    ): EffectReconciliationResult = store.reconcileEffect(
+        effect.effectId,
+        attestation(effect, decision),
+        syntheticTrustVerifier
+    )
+
     @Test
     fun unknownEffectIsEnumeratedAndCanBeConfirmedCompleted() {
         val store = InMemoryRuntimeStore()
@@ -36,13 +110,13 @@ class UnknownEffectReconciliationTest {
 
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            reconcile(store, effect, EffectReconciliationDecision.CONFIRMED_COMPLETED)
         )
         assertTrue(store.unknownEffects().isEmpty())
 
         assertEquals(
             EffectReconciliationResult.NOT_UNKNOWN,
-            store.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            reconcile(store, effect, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
         )
     }
 
@@ -55,7 +129,7 @@ class UnknownEffectReconciliationTest {
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(effect.effectId))
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            reconcile(store, effect, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
         )
 
         val retry = effect.copy(attemptId = java.util.UUID.randomUUID().toString(), attemptNumber = 2)
@@ -73,7 +147,7 @@ class UnknownEffectReconciliationTest {
 
         assertEquals(
             EffectReconciliationResult.NOT_UNKNOWN,
-            store.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            reconcile(store, effect, EffectReconciliationDecision.CONFIRMED_COMPLETED)
         )
     }
 
@@ -93,14 +167,14 @@ class UnknownEffectReconciliationTest {
 
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            restarted.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            reconcile(restarted, effect, EffectReconciliationDecision.CONFIRMED_COMPLETED)
         )
 
         val afterRestart = JournalRuntimeStore(journal)
         assertTrue(afterRestart.unknownEffects().isEmpty())
         assertEquals(
             EffectReconciliationResult.NOT_UNKNOWN,
-            afterRestart.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            reconcile(afterRestart, effect, EffectReconciliationDecision.CONFIRMED_COMPLETED)
         )
     }
 
@@ -109,7 +183,7 @@ class UnknownEffectReconciliationTest {
         val store = InMemoryRuntimeStore()
         assertEquals(
             EffectReconciliationResult.NOT_FOUND,
-            store.reconcileEffect("missing", EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            reconcile(store, invocation("missing"), EffectReconciliationDecision.CONFIRMED_COMPLETED)
         )
     }
 
@@ -209,7 +283,7 @@ class UnknownEffectReconciliationTest {
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(original.effectId))
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            reconcile(store, original, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
         )
 
         assertEquals(
@@ -358,7 +432,7 @@ class UnknownEffectReconciliationTest {
         if (!journal.exists()) return 0
         return journal.readLines(Charsets.UTF_8).count { line ->
             val parts = line.split('|')
-            if (parts.size < 2 || parts[0] !in setOf("E", "E2", "E3", "X")) {
+            if (parts.size < 2 || parts[0] !in setOf("E", "E2", "E3", "X", "A")) {
                 false
             } else {
                 val decoded = runCatching {
@@ -431,7 +505,7 @@ class UnknownEffectReconciliationTest {
                 }
                 "reconcile" -> {
                     val decision = EffectReconciliationDecision.valueOf(step.get("decision").asString)
-                    store.reconcileEffect(effectId, decision).name
+                    reconcile(store, invocation, decision).name
                 }
                 else -> throw AssertionError("Unsupported K-UNKNOWN operation: $operation")
             }
@@ -466,7 +540,7 @@ class UnknownEffectReconciliationTest {
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(original.effectId))
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            reconcile(store, original, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
         )
 
         assertEquals(
@@ -484,7 +558,7 @@ class UnknownEffectReconciliationTest {
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(original.effectId))
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            reconcile(store, original, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
         )
         assertEquals(
             EffectReservation.CONFLICT,
