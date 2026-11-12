@@ -26,7 +26,8 @@ class UnknownEffectReconciliationTest {
     private fun attestation(
         effect: CapabilityInvocation,
         decision: EffectReconciliationDecision
-    ) = EffectReconciliationAttestation(
+    ) : EffectReconciliationAttestation {
+        val unsigned = EffectReconciliationAttestation( EffectReconciliationAttestation(
         schema = "open_system_one.effect_reconciliation_attestation.v0.1",
         effectIdentity = EffectIdentityAttestation(
             schema = "open_system_one.effect_identity.v0.1",
@@ -71,7 +72,13 @@ class UnknownEffectReconciliationTest {
             signature = "synthetic-fixture-signature"
         ),
         reason = "Synthetic conformance record; not provider evidence."
-    )
+        )
+        return unsigned.copy(
+            authentication = unsigned.authentication.copy(
+                signedDigest = effectReconciliationAttestationSignaturePreimageDigest(unsigned)
+            )
+        )
+    }
 
     private val syntheticTrustVerifier = ReconciliationTrustVerifier { evidence, _ ->
         val digest = effectReconciliationAttestationDigest(evidence)
