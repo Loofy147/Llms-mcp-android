@@ -64,7 +64,8 @@ class ControlPlaneGateTest {
             restartedStore.reconcileEffect(invocation.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
         )
         assertTrue(restartedStore.unknownEffects().isEmpty())
-        assertEquals(EffectReservation.RESERVED, restartedStore.reserveEffects(listOf(invocation)))
+        val retry = invocation.copy(attemptId = java.util.UUID.randomUUID().toString())
+        assertEquals(EffectReservation.RESERVED, restartedStore.reserveEffects(listOf(retry)))
     }
 
     @Test
