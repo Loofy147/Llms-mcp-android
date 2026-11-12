@@ -1,0 +1,246 @@
+{
+  "version": 3,
+  "status": "DRAFT",
+  "purpose": "Small cross-runtime semantic fixtures for Run, Observation, Verification, Evidence, authority, continuation, and cache boundaries. These fixtures do not prove runtime conformance until executed by at least two materially different implementations. Version 0.3 replaces invalid placeholder effect digests in v0.2 with parameter maps and canonical SHA-256 digests, and makes attempt identity explicit in reservation vectors.",
+  "cases": [
+    {
+      "id": "K-IDENTITY-01",
+      "name": "run identity is stable",
+      "input": {
+        "run_id": "run_conformance_001",
+        "goal": "validate a deterministic capability path"
+      },
+      "assertions": [
+        "run_id remains identical across continuation and observation records",
+        "the same run_id is not silently reused for a different goal"
+      ]
+    },
+    {
+      "id": "K-EVIDENCE-01",
+      "name": "observation is not evidence",
+      "input": {
+        "observation_id": "obs_001",
+        "evidence_id": "ev_001"
+      },
+      "assertions": [
+        "an observation may be recorded without automatically becoming evidence",
+        "an evidence reference carries attributable source identity",
+        "evidence status does not imply truth without verification"
+      ]
+    },
+    {
+      "id": "K-VERIFY-01",
+      "name": "verification may reject a result",
+      "input": {
+        "target_type": "artifact",
+        "target_id": "artifact_001",
+        "verification_status": "failed"
+      },
+      "assertions": [
+        "verification status may be failed even when execution produced a result",
+        "a failed verification cannot be upgraded to passed by repetition alone"
+      ]
+    },
+    {
+      "id": "K-UNKNOWN-01",
+      "name": "ambiguous external effect remains unknown",
+      "input": {
+        "effect_id": "effect_001",
+        "status": "UNKNOWN"
+      },
+      "assertions": [
+        "UNKNOWN_OUTCOME is not treated as success",
+        "UNKNOWN_OUTCOME is not treated as safe-to-repeat",
+        "reconciliation is required before authoritative terminal classification"
+      ],
+      "test_vectors": [
+        {
+          "vector_id": "K-UNKNOWN-01-V1",
+          "version": 1,
+          "effects": {
+            "completed": {
+              "effect_id": "effect-k-unknown-completed",
+              "run_id": "run-k-unknown-completed",
+              "capability_id": "capability:test",
+              "action_id": "action:test",
+              "action_version": 1,
+              "scope": [],
+              "attributed_to": "conformance-adapter",
+              "parameters_digest": "sha256:047c0a200d4eb7c2796055e6673809ec077e881f164270b55e31045c6c0c7616",
+              "parameters": {
+                "message": "conformance-completed"
+              },
+              "attempt_id": "attempt-k-unknown-completed-1",
+              "attempt_number": 1
+            },
+            "confirmed_absent": {
+              "effect_id": "effect-k-unknown-absent",
+              "run_id": "run-k-unknown-absent",
+              "capability_id": "capability:test",
+              "action_id": "action:test",
+              "action_version": 1,
+              "scope": [],
+              "attributed_to": "conformance-adapter",
+              "parameters_digest": "sha256:848bdee063d1393ced67edf37e8098a551dbbe875b037f96ee63636b0506650b",
+              "parameters": {
+                "message": "conformance-absent"
+              },
+              "attempt_id": "attempt-k-unknown-absent-1",
+              "attempt_number": 1
+            }
+          },
+          "steps": [
+            {
+              "op": "reserve",
+              "effect_ref": "completed",
+              "expected": {
+                "result": "RESERVED",
+                "status": "RESERVED",
+                "record_count_delta": 1
+              },
+              "attempt_id": "attempt-k-unknown-completed-1",
+              "attempt_number": 1
+            },
+            {
+              "op": "mark_unknown",
+              "effect_ref": "completed",
+              "expected": {
+                "result": "UNKNOWN",
+                "status": "UNKNOWN",
+                "record_count_delta": 1
+              }
+            },
+            {
+              "op": "reserve",
+              "effect_ref": "completed",
+              "expected": {
+                "result": "REPLAY_BLOCKED",
+                "status": "UNKNOWN",
+                "record_count_delta": 0
+              }
+            },
+            {
+              "op": "reconcile",
+              "effect_ref": "completed",
+              "decision": "CONFIRMED_COMPLETED",
+              "expected": {
+                "result": "RECONCILED",
+                "status": "COMPLETED",
+                "record_count_delta": 1
+              }
+            },
+            {
+              "op": "reserve",
+              "effect_ref": "completed",
+              "expected": {
+                "result": "REPLAY_BLOCKED",
+                "status": "COMPLETED",
+                "record_count_delta": 0
+              }
+            },
+            {
+              "op": "reserve",
+              "effect_ref": "confirmed_absent",
+              "expected": {
+                "result": "RESERVED",
+                "status": "RESERVED",
+                "record_count_delta": 1
+              },
+              "attempt_id": "attempt-k-unknown-absent-1",
+              "attempt_number": 1
+            },
+            {
+              "op": "mark_unknown",
+              "effect_ref": "confirmed_absent",
+              "expected": {
+                "result": "UNKNOWN",
+                "status": "UNKNOWN",
+                "record_count_delta": 1
+              }
+            },
+            {
+              "op": "reconcile",
+              "effect_ref": "confirmed_absent",
+              "decision": "CONFIRMED_NOT_EXECUTED",
+              "expected": {
+                "result": "RECONCILED",
+                "status": "CONFIRMED_NOT_EXECUTED",
+                "record_count_delta": 1
+              }
+            },
+            {
+              "op": "reserve",
+              "effect_ref": "confirmed_absent",
+              "expected": {
+                "result": "RESERVED",
+                "status": "RESERVED",
+                "record_count_delta": 1
+              },
+              "attempt_id": "attempt-k-unknown-absent-2",
+              "attempt_number": 2
+            }
+          ],
+          "schema": "open_system_one.unknown_effect_test_vector.v0.2",
+          "canonicalization": "open_system_one.string_map_digest.v0.1"
+        }
+      ]
+    },
+    {
+      "id": "K-AUTHORITY-01",
+      "name": "authority is scoped and pinned",
+      "input": {
+        "authority_id": "authority_execution_001",
+        "owner_repo": "Loofy147/example-runtime",
+        "ref": "main",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "status": "current"
+      },
+      "assertions": [
+        "authority is bound to an explicit concern",
+        "repository identity and exact ref are preserved",
+        "known gaps remain visible",
+        "protocol reachability does not itself establish semantic authority"
+      ]
+    },
+    {
+      "id": "K-FRONTIER-01",
+      "name": "continuation frontier is a projection",
+      "input": {
+        "run_id": "run_conformance_001",
+        "frontier_revision": 3
+      },
+      "assertions": [
+        "frontier revisions are ordered",
+        "frontier records may identify open items and next actions",
+        "frontier state does not itself authorize an effect"
+      ]
+    },
+    {
+      "id": "K-CACHE-01",
+      "name": "cache is a valuable reusable artifact without authority",
+      "input": {
+        "cache_id": "cache_001",
+        "kind": "derived_result",
+        "derived_from": [
+          "run_conformance_001",
+          "artifact_001"
+        ],
+        "source_ref": "Loofy147/example-runtime@0123456789abcdef0123456789abcdef01234567",
+        "integrity_digest": "sha256:example",
+        "status": "fresh",
+        "reuse_policy": "revalidate_before_use",
+        "invalidation_conditions": [
+          "source revision changes",
+          "integrity mismatch"
+        ]
+      },
+      "assertions": [
+        "a cache remains identifiable as a reusable artifact after creation",
+        "cache reuse policy is explicit and may require revalidation",
+        "stale or invalid cache state does not require silent deletion",
+        "cache reuse does not establish evidence, truth, authorization, or semantic authority"
+      ]
+    }
+  ],
+  "schema": "open_system_one.kernel_conformance_fixtures.v0.3"
+}
