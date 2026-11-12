@@ -558,7 +558,7 @@ class UnknownEffectReconciliationTest {
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(original.effectId))
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            reconcile(store, original, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            reconcile(store, attemptTwo, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
         )
         assertEquals(
             EffectReservation.CONFLICT,
