@@ -6,6 +6,31 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ControlPlaneGateTest {
+    private val testAttestationVerifier = EffectAttestationVerifier { true }
+
+    private fun attestation(store: RuntimeStore, effectId: String): EffectReconciliationAttestation {
+        val current = requireNotNull(store.currentEffect(effectId))
+        return EffectReconciliationAttestation(
+            schema = "open_system_one.effect_reconciliation_attestation.v0.1",
+            effectIdentity = EffectAttestationIdentity(
+                current.effectId, current.runId, current.capabilityId, current.actionId,
+                current.actionVersion, current.scope, current.attributedTo, current.parametersDigest
+            ),
+            attemptId = current.attemptId,
+            attemptNumber = current.attemptNumber,
+            decision = EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED,
+            decidedAt = "2026-11-12T12:01:00Z",
+            authority = EffectAuthorityObservation("provider_api", "provider:test:v1", "observation:test",
+                "2026-11-12T12:00:30Z", "2026-11-12T12:00:31Z"),
+            evidence = EffectEvidenceReference("artifact:test", "sha256:" + "b".repeat(64)),
+            verifier = EffectVerifierRecord("verifier:test", "1.0.0", "PASS", "2026-11-12T12:00:50Z"),
+            accountablePrincipal = EffectAccountablePrincipal("service", "service:test"),
+            authentication = EffectAuthenticationEnvelope("ed25519", "key:test",
+                "sha256:" + "c".repeat(64), "signature:test"),
+            reason = "Synthetic test attestation."
+        )
+    }
+
     @Test
     fun postApprovalSatisfiesApprovalRequirementAndExecutesOnce() {
         var executions = 0
@@ -54,14 +79,14 @@ class ControlPlaneGateTest {
             parameters = mapOf("message" to "hello")
         )
 
-        assertEquals(EffectReservation.RESERVED, JournalRuntimeStore(journal).reserveEffects(listOf(invocation)))
+        assertEquals(EffectReservation.RESERVED, JournalRuntimeStore(journal, testAttestationVerifier).reserveEffects(listOf(invocation)))
 
         val restartedStore = JournalRuntimeStore(journal)
         assertEquals(1, restartedStore.recoverInterruptedEffects())
         assertEquals(EffectStatus.UNKNOWN, restartedStore.unknownEffects().single().status)
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            restartedStore.reconcileEffect(invocation.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            restartedStore.reconcileEffect(attestation(restartedStore, invocation.effectId))
         )
         assertTrue(restartedStore.unknownEffects().isEmpty())
         val retry = invocation.copy(attemptId = java.util.UUID.randomUUID().toString(), attemptNumber = 2)
