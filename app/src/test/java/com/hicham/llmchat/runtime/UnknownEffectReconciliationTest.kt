@@ -104,4 +104,81 @@ class UnknownEffectReconciliationTest {
             store.reconcileEffect("missing", EffectReconciliationDecision.CONFIRMED_COMPLETED)
         )
     }
+
+    @Test
+    fun unknownEffectCannotBeCompletedWithoutReconciliation() {
+        val store = InMemoryRuntimeStore()
+        val effect = invocation()
+
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
+        store.markEffectUnknown(effect.effectId)
+        store.completeEffect(effect.effectId)
+
+        assertEquals(EffectStatus.UNKNOWN, store.unknownEffects().single().status)
+    }
+
+    @Test
+    fun completedEffectCannotBeMovedBackToUnknown() {
+        val store = InMemoryRuntimeStore()
+        val effect = invocation()
+
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
+        store.completeEffect(effect.effectId)
+        store.markEffectUnknown(effect.effectId)
+
+        assertTrue(store.unknownEffects().isEmpty())
+    }
+
+    @Test
+    fun journalRejectsRunIdentityMismatchForAnExistingEffectId() {
+        val journal = File.createTempFile("effect-run-identity", ".journal")
+        journal.deleteOnExit()
+        val store = JournalRuntimeStore(journal)
+        val original = invocation()
+
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(original)))
+        val alteredRun = original.copy(runId = "different-run")
+
+        assertEquals(
+            EffectReservation.CONFLICT,
+            store.reserveEffects(listOf(alteredRun))
+        )
+    }
+
+    @Test
+    fun journalFailsClosedOnMalformedTrailingRecord() {
+        val journal = File.createTempFile("effect-corrupt-tail", ".journal")
+        journal.deleteOnExit()
+        val store = JournalRuntimeStore(journal)
+        val effect = invocation()
+
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
+        journal.appendText("X|not-valid-base64|UNKNOWN\\n")
+
+        val restarted = JournalRuntimeStore(journal)
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            restarted.unknownEffects()
+        }
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            restarted.reserveEffects(listOf(invocation("another-effect")))
+        }
+    }
+
+    @Test
+    fun journalRejectsIllegalStatusTransitionDuringReplay() {
+        val journal = File.createTempFile("effect-invalid-transition", ".journal")
+        journal.deleteOnExit()
+        val store = JournalRuntimeStore(journal)
+        val effect = invocation()
+
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
+        store.completeEffect(effect.effectId)
+        store.markEffectUnknown(effect.effectId)
+        val restarted = JournalRuntimeStore(journal)
+
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            restarted.unknownEffects()
+        }
+    }
+
 }
