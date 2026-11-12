@@ -9,6 +9,10 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Base64
 import java.time.OffsetDateTime
+import java.nio.file.StandardOpenOption
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /** Durable runtime boundary. Implementations must serialize state before returning. */
 interface RuntimeStore {
@@ -648,67 +652,85 @@ class InMemoryRuntimeStore : RuntimeStore {
  * callers cannot read, reserve, reconcile or append until the file is repaired.
  */
 class JournalRuntimeStore(private val file: File) : RuntimeStore {
-    private val lock = Any()
+    private val sharedPathLock = pathLocks.computeIfAbsent(file.canonicalPath) { ReentrantLock(true) }
 
     init {
         file.parentFile?.mkdirs()
         if (!file.exists()) file.createNewFile()
     }
 
-    override fun saveRun(run: Run) = synchronized(lock) {
-        replay() // Validate the existing journal before appending anything.
-        append(RunRecord.encode(run))
+    private fun <T> withJournalLock(block: (FileChannel) -> T): T = sharedPathLock.withLock {
+        FileChannel.open(
+            file.toPath(),
+            StandardOpenOption.READ,
+            StandardOpenOption.WRITE
+        ).use { channel ->
+            val fileLock = channel.lock()
+            try {
+                block(channel)
+            } finally {
+                fileLock.release()
+            }
+        }
+    }
+
+    override fun saveRun(run: Run) = withJournalLock { channel ->
+        replay(channel) // Validate the existing journal before appending anything.
+        append(channel, RunRecord.encode(run))
     }
 
     override fun loadRun(runId: String, catalog: ActionCatalog): Run? =
-        synchronized(lock) { replay().runs[runId]?.toRun(catalog) }
+        withJournalLock { channel -> replay(channel).runs[runId]?.toRun(catalog) }
 
-    override fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation = synchronized(lock) {
-        if (invocations.map { it.effectId }.distinct().size != invocations.size) {
-            return@synchronized EffectReservation.CONFLICT
-        }
+    override fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation =
+        withJournalLock { channel ->
+            if (invocations.map { it.effectId }.distinct().size != invocations.size) {
+                return@withJournalLock EffectReservation.CONFLICT
+            }
 
-        val state = replay()
-        val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
-        if (incoming.any { !it.hasValidIdentity() }) return@synchronized EffectReservation.CONFLICT
+            val state = replay(channel)
+            val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
+            if (incoming.any { !it.hasValidIdentity() }) return@withJournalLock EffectReservation.CONFLICT
 
-        for (candidate in incoming) {
-            val current = state.effects[candidate.effectId]
-            if (current == null) {
-                if (candidate.attemptNumber != 1) return@synchronized EffectReservation.CONFLICT
-                if (state.usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
-                    return@synchronized EffectReservation.CONFLICT
+            for (candidate in incoming) {
+                val current = state.effects[candidate.effectId]
+                if (current == null) {
+                    if (candidate.attemptNumber != 1) return@withJournalLock EffectReservation.CONFLICT
+                    if (state.usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
+                        return@withJournalLock EffectReservation.CONFLICT
+                    }
+                    continue
                 }
-                continue
+                if (!current.compatibleWith(candidate)) return@withJournalLock EffectReservation.CONFLICT
+                if (current.status != EffectStatus.CONFIRMED_NOT_EXECUTED) {
+                    return@withJournalLock EffectReservation.REPLAY_BLOCKED
+                }
+                if (candidate.attemptNumber != current.attemptNumber + 1) {
+                    return@withJournalLock EffectReservation.CONFLICT
+                }
+                if (state.usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
+                    return@withJournalLock EffectReservation.CONFLICT
+                }
             }
-            if (!current.compatibleWith(candidate)) return@synchronized EffectReservation.CONFLICT
-            if (current.status != EffectStatus.CONFIRMED_NOT_EXECUTED) {
-                return@synchronized EffectReservation.REPLAY_BLOCKED
-            }
-            if (candidate.attemptNumber != current.attemptNumber + 1) {
-                return@synchronized EffectReservation.CONFLICT
-            }
-            if (state.usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
-                return@synchronized EffectReservation.CONFLICT
-            }
+
+            incoming.forEach { append(channel, it.encode()) }
+            EffectReservation.RESERVED
         }
 
-        incoming.forEach { append(it.encode()) }
-        EffectReservation.RESERVED
-    }
+    override fun completeEffect(effectId: String): EffectTransitionResult =
+        withJournalLock { channel -> transition(channel, effectId, EffectStatus.COMPLETED) }
 
-    override fun completeEffect(effectId: String): EffectTransitionResult = synchronized(lock) {
-        transition(effectId, EffectStatus.COMPLETED)
-    }
+    override fun markEffectUnknown(effectId: String): EffectTransitionResult =
+        withJournalLock { channel -> transition(channel, effectId, EffectStatus.UNKNOWN) }
 
-    override fun markEffectUnknown(effectId: String): EffectTransitionResult = synchronized(lock) {
-        transition(effectId, EffectStatus.UNKNOWN)
-    }
-
-    private fun transition(effectId: String, next: EffectStatus): EffectTransitionResult {
-        val current = replay().effects[effectId] ?: return EffectTransitionResult.NOT_FOUND
+    private fun transition(
+        channel: FileChannel,
+        effectId: String,
+        next: EffectStatus
+    ): EffectTransitionResult {
+        val current = replay(channel).effects[effectId] ?: return EffectTransitionResult.NOT_FOUND
         if (!legalDirectEffectTransition(current.status, next)) return EffectTransitionResult.INVALID_TRANSITION
-        append("X|${Codec.encode(effectId)}|${next.name}")
+        append(channel, "X|${Codec.encode(effectId)}|${next.name}")
         return EffectTransitionResult.APPLIED
     }
 
@@ -717,25 +739,33 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
         attestation: EffectReconciliationAttestation,
         trustVerifier: ReconciliationTrustVerifier?
     ): EffectReconciliationResult {
-        val snapshot = synchronized(lock) {
-            val current = replay().effects[effectId] ?: return EffectReconciliationResult.NOT_FOUND
-            if (current.status != EffectStatus.UNKNOWN) return EffectReconciliationResult.NOT_UNKNOWN
-            current.record()
+        val snapshotResult = withJournalLock { channel ->
+            val current = replay(channel).effects[effectId]
+            when {
+                current == null -> EffectReconciliationResult.NOT_FOUND to null
+                current.status != EffectStatus.UNKNOWN -> EffectReconciliationResult.NOT_UNKNOWN to null
+                else -> null to current.record().copy(
+                    scope = current.scope.toSet(),
+                    parameters = current.parameters.toMap()
+                )
+            }
         }
+        snapshotResult.first?.let { return it }
+        val snapshot = requireNotNull(snapshotResult.second)
         val (error, audit) = prepareReconciliation(attestation, snapshot, trustVerifier)
         if (error != null) return error
         val acceptedAudit = requireNotNull(audit)
 
-        return synchronized(lock) {
-            val latest = replay().effects[effectId]
-                ?: return@synchronized EffectReconciliationResult.NOT_FOUND
+        return withJournalLock { channel ->
+            val latest = replay(channel).effects[effectId]
+                ?: return@withJournalLock EffectReconciliationResult.NOT_FOUND
             if (!sameIdentityAndAttempt(latest.record(), snapshot)) {
-                return@synchronized EffectReconciliationResult.STALE_ATTEMPT
+                return@withJournalLock EffectReconciliationResult.STALE_ATTEMPT
             }
             if (latest.status != EffectStatus.UNKNOWN) {
-                return@synchronized EffectReconciliationResult.NOT_UNKNOWN
+                return@withJournalLock EffectReconciliationResult.NOT_UNKNOWN
             }
-            append(encodeReconciliationAudit(effectId, acceptedAudit))
+            append(channel, encodeReconciliationAudit(effectId, acceptedAudit))
             if (attestation.decision == EffectReconciliationDecision.UNRESOLVED) {
                 EffectReconciliationResult.UNRESOLVED
             } else {
@@ -766,34 +796,41 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
         Codec.encode(audit.principalRef)
     ).joinToString("|")
 
-    override fun currentEffect(effectId: String): EffectRecord? = synchronized(lock) {
-        replay().effects[effectId]?.record()
+    override fun currentEffect(effectId: String): EffectRecord? =
+        withJournalLock { channel -> replay(channel).effects[effectId]?.record() }
+
+    override fun unknownEffects(): List<EffectRecord> = withJournalLock { channel ->
+        replay(channel).effects.values.filter { it.status == EffectStatus.UNKNOWN }.map { it.record() }
     }
 
-    override fun unknownEffects(): List<EffectRecord> = synchronized(lock) {
-        replay().effects.values.filter { it.status == EffectStatus.UNKNOWN }.map { it.record() }
-    }
-
-    override fun recoverInterruptedEffects(): Int = synchronized(lock) {
-        val reserved = replay().effects.values.filter { it.status == EffectStatus.RESERVED }
-        reserved.forEach { append("X|${Codec.encode(it.effectId)}|UNKNOWN") }
+    override fun recoverInterruptedEffects(): Int = withJournalLock { channel ->
+        val reserved = replay(channel).effects.values.filter { it.status == EffectStatus.RESERVED }
+        reserved.forEach { append(channel, "X|${Codec.encode(it.effectId)}|UNKNOWN") }
         reserved.size
     }
 
-    private fun append(record: String) {
+    private fun append(channel: FileChannel, record: String) {
         val payload = (record + "\n").toByteArray(StandardCharsets.UTF_8)
-        FileChannel.open(
-            file.toPath(),
-            java.nio.file.StandardOpenOption.WRITE,
-            java.nio.file.StandardOpenOption.APPEND
-        ).use { channel ->
-            writeFully(channel, ByteBuffer.wrap(payload))
-            channel.force(true)
-        }
+        channel.position(channel.size())
+        writeFully(channel, ByteBuffer.wrap(payload))
+        channel.force(true)
     }
 
-    private fun replay(): State {
-        val bytes = file.readBytes()
+    private fun replay(channel: FileChannel): State {
+        val fileSize = channel.size()
+        if (fileSize > Int.MAX_VALUE.toLong()) {
+            throw IllegalStateException("journal exceeds supported in-memory replay size")
+        }
+        channel.position(0L)
+        val buffer = ByteBuffer.allocate(fileSize.toInt())
+        while (buffer.hasRemaining()) {
+            val count = channel.read(buffer)
+            if (count <= 0) break
+        }
+        if (buffer.position() != buffer.capacity()) {
+            throw IllegalStateException("journal read was incomplete; refusing state reconstruction")
+        }
+        val bytes = buffer.array()
         if (bytes.isNotEmpty() && bytes.last() != '\n'.code.toByte()) {
             throw IllegalStateException("journal has an unterminated trailing record; repair required")
         }
@@ -933,6 +970,10 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
         val effects: MutableMap<String, StoredEffect>,
         val usedAttemptIds: MutableMap<String, MutableSet<String>>
     )
+
+    companion object {
+        private val pathLocks = ConcurrentHashMap<String, ReentrantLock>()
+    }
 }
 
 /** Loops until the entire record is written; a zero-progress write fails closed. */
