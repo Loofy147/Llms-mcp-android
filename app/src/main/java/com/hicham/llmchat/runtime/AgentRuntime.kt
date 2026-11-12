@@ -91,9 +91,20 @@ class AgentRuntime(
                     executions += execution
                     // A returned capability result establishes the outcome of this specific
                     // executor boundary. Action-level verification must not erase that fact.
-                    store.completeEffect(invocation.effectId)
+                    val completion = store.completeEffect(invocation.effectId)
+                    if (completion != EffectTransitionResult.APPLIED) {
+                        throw IllegalStateException(
+                            "Effect completion was not persisted for ${invocation.effectId}: $completion"
+                        )
+                    }
                 } catch (e: Exception) {
-                    store.markEffectUnknown(invocation.effectId)
+                    val unknown = store.markEffectUnknown(invocation.effectId)
+                    if (unknown != EffectTransitionResult.APPLIED) {
+                        throw IllegalStateException(
+                            "Effect outcome could not be persisted as UNKNOWN for ${invocation.effectId}: $unknown",
+                            e
+                        )
+                    }
                     throw e
                 }
             }
