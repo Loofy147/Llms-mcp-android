@@ -199,54 +199,112 @@ private fun canonicalParametersDigest(parameters: Map<String, String>): String {
 internal fun canonicalEffectParametersDigest(parameters: Map<String, String>): String =
     canonicalParametersDigest(parameters)
 
+private const val EFFECT_ATTESTATION_CANONICALIZATION_ID =
+    "open_system_one.effect_reconciliation_attestation_canonical.v0.1"
+
+private fun compareUtf8(left: String, right: String): Int {
+    val leftBytes = left.toByteArray(StandardCharsets.UTF_8)
+    val rightBytes = right.toByteArray(StandardCharsets.UTF_8)
+    val limit = minOf(leftBytes.size, rightBytes.size)
+    for (index in 0 until limit) {
+        val leftByte = leftBytes[index].toInt() and 0xff
+        val rightByte = rightBytes[index].toInt() and 0xff
+        if (leftByte != rightByte) return leftByte.compareTo(rightByte)
+    }
+    return leftBytes.size.compareTo(rightBytes.size)
+}
+
+private fun effectReconciliationCanonicalFields(
+    attestation: EffectReconciliationAttestation,
+    includeSignatureFields: Boolean
+): List<String> {
+    val identity = attestation.effectIdentity
+    val authentication = attestation.authentication
+    val scope = identity.scope.sortedWith(::compareUtf8)
+    val fields = mutableListOf(
+        EFFECT_ATTESTATION_CANONICALIZATION_ID,
+        attestation.schema,
+        identity.schema,
+        identity.effectId,
+        identity.runId,
+        identity.capabilityId,
+        identity.actionId,
+        identity.actionVersion.toString(),
+        scope.size.toString()
+    )
+    fields.addAll(scope)
+    fields.addAll(
+        listOf(
+            identity.attributedTo,
+            identity.parametersDigest,
+            attestation.attemptId,
+            attestation.attemptNumber.toString(),
+            attestation.decision.name,
+            attestation.decidedAt,
+            attestation.authority.kind,
+            attestation.authority.ref,
+            attestation.authority.observationRef,
+            attestation.authority.queriedAt,
+            attestation.authority.observedAt,
+            attestation.evidence.artifactRef,
+            attestation.evidence.digest,
+            attestation.verifier.ref,
+            attestation.verifier.version,
+            attestation.verifier.result,
+            attestation.verifier.verifiedAt,
+            attestation.accountablePrincipal.kind,
+            attestation.accountablePrincipal.ref,
+            authentication.scheme,
+            authentication.keyRef
+        )
+    )
+    if (includeSignatureFields) {
+        fields.add(authentication.signedDigest)
+        fields.add(authentication.signature)
+    }
+    fields.add(attestation.reason)
+    return fields
+}
+
+private fun encodeAttestationFields(fields: List<String>): ByteArray {
+    val output = java.io.ByteArrayOutputStream()
+    fields.forEach { value ->
+        val encoded = value.toByteArray(StandardCharsets.UTF_8)
+        output.write(encoded.size.toString().toByteArray(StandardCharsets.US_ASCII))
+        output.write(':'.code)
+        output.write(encoded)
+    }
+    return output.toByteArray()
+}
+
+internal fun effectReconciliationAttestationSignaturePreimageBytes(
+    attestation: EffectReconciliationAttestation
+): ByteArray = encodeAttestationFields(
+    effectReconciliationCanonicalFields(attestation, includeSignatureFields = false)
+)
+
+internal fun effectReconciliationAttestationSignaturePreimageDigest(
+    attestation: EffectReconciliationAttestation
+): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(effectReconciliationAttestationSignaturePreimageBytes(attestation))
+    val hex = digest.joinToString("") { byte ->
+        (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+    }
+    return "sha256:$hex"
+}
+
+internal fun effectReconciliationAttestationCanonicalBytes(
+    attestation: EffectReconciliationAttestation
+): ByteArray = encodeAttestationFields(
+    effectReconciliationCanonicalFields(attestation, includeSignatureFields = true)
+)
+
 internal fun effectReconciliationAttestationDigest(
     attestation: EffectReconciliationAttestation
 ): String {
-    val fields = mutableListOf<String>()
-    fun add(value: String) { fields.add(value) }
-
-    add(attestation.schema)
-    val identity = attestation.effectIdentity
-    add(identity.schema)
-    add(identity.effectId)
-    add(identity.runId)
-    add(identity.capabilityId)
-    add(identity.actionId)
-    add(identity.actionVersion.toString())
-    add(identity.scope.size.toString())
-    identity.scope.sorted().forEach(::add)
-    add(identity.attributedTo)
-    add(identity.parametersDigest)
-    add(attestation.attemptId)
-    add(attestation.attemptNumber.toString())
-    add(attestation.decision.name)
-    add(attestation.decidedAt)
-    add(attestation.authority.kind)
-    add(attestation.authority.ref)
-    add(attestation.authority.observationRef)
-    add(attestation.authority.queriedAt)
-    add(attestation.authority.observedAt)
-    add(attestation.evidence.artifactRef)
-    add(attestation.evidence.digest)
-    add(attestation.verifier.ref)
-    add(attestation.verifier.version)
-    add(attestation.verifier.result)
-    add(attestation.verifier.verifiedAt)
-    add(attestation.accountablePrincipal.kind)
-    add(attestation.accountablePrincipal.ref)
-    add(attestation.authentication.scheme)
-    add(attestation.authentication.keyRef)
-    add(attestation.authentication.signedDigest)
-    add(attestation.authentication.signature)
-    add(attestation.reason)
-
-    val canonical = buildString {
-        fields.forEach { value ->
-            val byteLength = value.toByteArray(StandardCharsets.UTF_8).size
-            append(byteLength).append(':').append(value)
-        }
-    }.toByteArray(StandardCharsets.UTF_8)
-    val digest = MessageDigest.getInstance("SHA-256").digest(canonical)
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(effectReconciliationAttestationCanonicalBytes(attestation))
     val hex = digest.joinToString("") { byte ->
         (byte.toInt() and 0xff).toString(16).padStart(2, '0')
     }
@@ -351,6 +409,12 @@ private fun validateReconciliationAttestation(
         !Regex("^sha256:[0-9a-f]{64}$").matches(authentication.signedDigest) ||
         authentication.signature.isBlank() ||
         attestation.reason.isBlank()
+    ) {
+        return EffectReconciliationResult.ATTESTATION_INVALID
+    }
+    if (
+        authentication.signedDigest !=
+        effectReconciliationAttestationSignaturePreimageDigest(attestation)
     ) {
         return EffectReconciliationResult.ATTESTATION_INVALID
     }
