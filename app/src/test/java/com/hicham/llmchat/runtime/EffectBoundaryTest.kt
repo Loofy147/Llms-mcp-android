@@ -53,14 +53,26 @@ class EffectBoundaryTest {
         assertEquals(listOf("a", "b"), executions)
         assertTrue(run.evidence?.observations?.any { it.value == "a-completed" } == true)
 
+        val effectInvocations = requireNotNull(run.evidence).capabilityInvocations
+            .associateBy { it.effectId }
+        val effectAInvocation = requireNotNull(effectInvocations[effectA])
+        val effectBInvocation = requireNotNull(effectInvocations[effectB])
         assertEquals(
             EffectReconciliationResult.NOT_UNKNOWN,
-            store.reconcileEffect(effectA, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            TestReconciliationSupport.reconcile(
+                store,
+                effectAInvocation,
+                EffectReconciliationDecision.CONFIRMED_COMPLETED
+            )
         )
         assertEquals(1, store.unknownEffects().count { it.effectId == effectB })
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(effectB, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            TestReconciliationSupport.reconcile(
+                store,
+                effectBInvocation,
+                EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED
+            )
         )
     }
 
