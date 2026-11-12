@@ -17,6 +17,7 @@ interface RuntimeStore {
     fun completeEffect(effectId: String): EffectTransitionResult
     fun markEffectUnknown(effectId: String): EffectTransitionResult
     fun reconcileEffect(effectId: String, decision: EffectReconciliationDecision): EffectReconciliationResult
+    fun currentEffect(effectId: String): EffectRecord?
     fun unknownEffects(): List<EffectRecord>
     /** Convert effects that were reserved before an interrupted process into explicitly reconcilable UNKNOWN state. */
     fun recoverInterruptedEffects(): Int
@@ -38,6 +39,7 @@ data class EffectRecord(
     val attributedTo: String,
     val parameters: Map<String, String>,
     val attemptId: String,
+    val attemptNumber: Int,
     val parametersDigest: String,
     val status: EffectStatus
 )
@@ -87,6 +89,7 @@ private data class StoredEffect(
     val attributedTo: String,
     val parameters: Map<String, String>,
     val attemptId: String,
+    val attemptNumber: Int,
     val parametersDigest: String,
     val status: EffectStatus
 ) {
@@ -98,6 +101,7 @@ private data class StoredEffect(
             actionVersion > 0 &&
             attributedTo.isNotBlank() &&
             attemptId.isNotBlank() &&
+            attemptNumber > 0 &&
             scope.none { it.isBlank() } &&
             parameters.keys.none { it.isBlank() } &&
             parametersDigest == canonicalParametersDigest(parameters)
@@ -116,12 +120,12 @@ private data class StoredEffect(
 
     fun record() = EffectRecord(
         effectId, runId, capabilityId, actionId, actionVersion, scope,
-        attributedTo, parameters, attemptId, parametersDigest, status
+        attributedTo, parameters, attemptId, attemptNumber, parametersDigest, status
     )
 
-    /** E2 adds explicit attempt identity and parameter digest; E remains readable. */
+    /** E3 adds the monotonic attempt number; older E/E2 events remain readable. */
     fun encode(): String = listOf(
-        "E2",
+        "E3",
         Codec.encode(effectId),
         Codec.encode(runId),
         Codec.encode(capabilityId),
@@ -132,6 +136,7 @@ private data class StoredEffect(
         Codec.encodeMap(parameters),
         Codec.encode(parametersDigest),
         Codec.encode(attemptId),
+        attemptNumber.toString(),
         status.name
     ).joinToString("|")
 
@@ -146,6 +151,7 @@ private data class StoredEffect(
             attributedTo = invocation.attributedTo,
             parameters = invocation.parameters.toMap(),
             attemptId = invocation.attemptId,
+            attemptNumber = invocation.attemptNumber,
             parametersDigest = canonicalParametersDigest(invocation.parameters),
             status = status
         )
@@ -179,7 +185,22 @@ private data class StoredEffect(
                     parameters = Codec.decodeMap(parts[8]),
                     parametersDigest = Codec.decode(parts[9]),
                     attemptId = Codec.decode(parts[10]),
+                    attemptNumber = 1,
                     status = EffectStatus.valueOf(parts[11])
+                )
+                parts.size == 13 && parts[0] == "E3" -> StoredEffect(
+                    effectId = Codec.decode(parts[1]),
+                    runId = Codec.decode(parts[2]),
+                    capabilityId = Codec.decode(parts[3]),
+                    actionId = Codec.decode(parts[4]),
+                    actionVersion = parts[5].toInt(),
+                    scope = Codec.decodeSet(parts[6]),
+                    attributedTo = Codec.decode(parts[7]),
+                    parameters = Codec.decodeMap(parts[8]),
+                    parametersDigest = Codec.decode(parts[9]),
+                    attemptId = Codec.decode(parts[10]),
+                    attemptNumber = parts[11].toInt(),
+                    status = EffectStatus.valueOf(parts[12])
                 )
                 else -> throw IllegalArgumentException("unsupported effect record shape")
             }
