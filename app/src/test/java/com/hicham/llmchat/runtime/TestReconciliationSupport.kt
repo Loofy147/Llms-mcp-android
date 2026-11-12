@@ -4,7 +4,8 @@ internal object TestReconciliationSupport {
     fun attestation(
         effect: CapabilityInvocation,
         decision: EffectReconciliationDecision
-    ) = EffectReconciliationAttestation(
+    ) : EffectReconciliationAttestation {
+        val unsigned = EffectReconciliationAttestation( EffectReconciliationAttestation(
         schema = "open_system_one.effect_reconciliation_attestation.v0.1",
         effectIdentity = EffectIdentityAttestation(
             schema = "open_system_one.effect_identity.v0.1",
@@ -49,7 +50,13 @@ internal object TestReconciliationSupport {
             signature = "synthetic-fixture-signature"
         ),
         reason = "Synthetic test record; not provider evidence."
-    )
+        )
+        return unsigned.copy(
+            authentication = unsigned.authentication.copy(
+                signedDigest = effectReconciliationAttestationSignaturePreimageDigest(unsigned)
+            )
+        )
+    }
 
     val trustVerifier = ReconciliationTrustVerifier { attestation, _ ->
         val digest = effectReconciliationAttestationDigest(attestation)
