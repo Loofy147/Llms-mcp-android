@@ -1,6 +1,7 @@
 package com.hicham.llmchat.runtime
 
 import java.io.File
+import com.google.gson.Gson
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
@@ -16,7 +17,7 @@ interface RuntimeStore {
     fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation
     fun completeEffect(effectId: String): EffectTransitionResult
     fun markEffectUnknown(effectId: String): EffectTransitionResult
-    fun reconcileEffect(effectId: String, decision: EffectReconciliationDecision): EffectReconciliationResult
+    fun reconcileEffect(attestation: EffectReconciliationAttestation): EffectReconciliationResult
     fun currentEffect(effectId: String): EffectRecord?
     fun unknownEffects(): List<EffectRecord>
     /** Convert effects that were reserved before an interrupted process into explicitly reconcilable UNKNOWN state. */
@@ -25,8 +26,100 @@ interface RuntimeStore {
 
 enum class EffectReservation { RESERVED, REPLAY_BLOCKED, CONFLICT }
 enum class EffectTransitionResult { APPLIED, NOT_FOUND, INVALID_TRANSITION }
-enum class EffectReconciliationDecision { CONFIRMED_COMPLETED, CONFIRMED_NOT_EXECUTED }
-enum class EffectReconciliationResult { RECONCILED, NOT_FOUND, NOT_UNKNOWN }
+enum class EffectReconciliationDecision { CONFIRMED_COMPLETED, CONFIRMED_NOT_EXECUTED, UNRESOLVED }
+enum class EffectReconciliationResult { RECONCILED, UNRESOLVED, NOT_FOUND, NOT_UNKNOWN, ATTESTATION_REJECTED }
+
+data class EffectAttestationIdentity(
+    val effectId: String,
+    val runId: String,
+    val capabilityId: String,
+    val actionId: String,
+    val actionVersion: Int,
+    val scope: Set<String>,
+    val attributedTo: String,
+    val parametersDigest: String
+)
+
+data class EffectAuthorityObservation(
+    val kind: String,
+    val ref: String,
+    val observationRef: String,
+    val queriedAt: String,
+    val observedAt: String
+)
+
+data class EffectEvidenceReference(val artifactRef: String, val digest: String)
+data class EffectVerifierRecord(val ref: String, val version: String, val result: String, val verifiedAt: String)
+data class EffectAccountablePrincipal(val kind: String, val ref: String)
+data class EffectAuthenticationEnvelope(
+    val scheme: String,
+    val keyRef: String,
+    val signedDigest: String,
+    val signature: String
+)
+
+/** Shape and identity envelope for the Open-System-One v0.1 attestation.
+ * Signature, authority and evidence trust are delegated to EffectAttestationVerifier.
+ */
+data class EffectReconciliationAttestation(
+    val schema: String,
+    val effectIdentity: EffectAttestationIdentity,
+    val attemptId: String,
+    val attemptNumber: Int,
+    val decision: EffectReconciliationDecision,
+    val decidedAt: String,
+    val authority: EffectAuthorityObservation,
+    val evidence: EffectEvidenceReference,
+    val verifier: EffectVerifierRecord,
+    val accountablePrincipal: EffectAccountablePrincipal,
+    val authentication: EffectAuthenticationEnvelope,
+    val reason: String
+)
+
+fun interface EffectAttestationVerifier {
+    /** Must authenticate the envelope and verify authority, evidence bytes/digest and verifier applicability. */
+    fun verify(attestation: EffectReconciliationAttestation): Boolean
+}
+
+/** Default is deliberately fail-closed. */
+object RejectAllEffectAttestations : EffectAttestationVerifier {
+    override fun verify(attestation: EffectReconciliationAttestation): Boolean = false
+}
+
+private fun EffectReconciliationAttestation.isValidFor(current: EffectRecord): Boolean {
+    val identity = effectIdentity
+    val digestPattern = Regex("^sha256:[0-9a-f]{64}$")
+    val identityMatches =
+        identity.effectId == current.effectId &&
+        identity.runId == current.runId &&
+        identity.capabilityId == current.capabilityId &&
+        identity.actionId == current.actionId &&
+        identity.actionVersion == current.actionVersion &&
+        identity.scope == current.scope &&
+        identity.attributedTo == current.attributedTo &&
+        identity.parametersDigest == current.parametersDigest
+    val confirmed = decision == EffectReconciliationDecision.CONFIRMED_COMPLETED ||
+        decision == EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED
+    val verifierResultValid = if (confirmed) verifier.result == "PASS"
+        else verifier.result == "FAIL" || verifier.result == "INCONCLUSIVE"
+    return schema == "open_system_one.effect_reconciliation_attestation.v0.1" &&
+        identity.effectId.isNotBlank() && identity.runId.isNotBlank() &&
+        identity.capabilityId.isNotBlank() && identity.actionId.isNotBlank() &&
+        identity.actionVersion > 0 && identity.scope.none { it.isBlank() } &&
+        identity.attributedTo.isNotBlank() && digestPattern.matches(identity.parametersDigest) &&
+        identityMatches && attemptId == current.attemptId && attemptNumber == current.attemptNumber &&
+        attemptId.isNotBlank() && attemptNumber > 0 && decidedAt.isNotBlank() &&
+        authority.kind.isNotBlank() && authority.ref.isNotBlank() &&
+        authority.observationRef.isNotBlank() && authority.queriedAt.isNotBlank() &&
+        authority.observedAt.isNotBlank() && evidence.artifactRef.isNotBlank() &&
+        digestPattern.matches(evidence.digest) && verifier.ref.isNotBlank() &&
+        verifier.version.isNotBlank() && verifierResultValid && verifier.verifiedAt.isNotBlank() &&
+        accountablePrincipal.kind in setOf("human", "service") &&
+        accountablePrincipal.ref.isNotBlank() &&
+        authentication.scheme in setOf("ed25519", "jws") &&
+        authentication.keyRef.isNotBlank() && digestPattern.matches(authentication.signedDigest) &&
+        authentication.signature.isNotBlank() && reason.isNotBlank()
+}
 enum class EffectStatus { RESERVED, COMPLETED, UNKNOWN, CONFIRMED_NOT_EXECUTED }
 
 data class EffectRecord(
@@ -221,10 +314,13 @@ private fun legalDirectEffectTransition(previous: EffectStatus, next: EffectStat
         (next == EffectStatus.COMPLETED || next == EffectStatus.UNKNOWN)
 
 /** A local store with the same legal-transition reducer as the journal store. */
-class InMemoryRuntimeStore : RuntimeStore {
+class InMemoryRuntimeStore(
+    private val attestationVerifier: EffectAttestationVerifier = RejectAllEffectAttestations
+) : RuntimeStore {
     private val runs = linkedMapOf<String, Run>()
     private val effects = linkedMapOf<String, StoredEffect>()
     private val usedAttemptIds = linkedMapOf<String, MutableSet<String>>()
+    private val reconciliationHistory = mutableListOf<EffectReconciliationAttestation>()
 
     @Synchronized override fun saveRun(run: Run) { runs[run.id] = run }
     @Synchronized override fun loadRun(runId: String, catalog: ActionCatalog): Run? = runs[runId]
@@ -272,12 +368,19 @@ class InMemoryRuntimeStore : RuntimeStore {
     }
 
     @Synchronized override fun reconcileEffect(
-        effectId: String,
-        decision: EffectReconciliationDecision
+        attestation: EffectReconciliationAttestation
     ): EffectReconciliationResult {
+        val effectId = attestation.effectIdentity.effectId
         val current = effects[effectId] ?: return EffectReconciliationResult.NOT_FOUND
         if (current.status != EffectStatus.UNKNOWN) return EffectReconciliationResult.NOT_UNKNOWN
-        effects[effectId] = current.copy(status = decision.toStatus())
+        if (!attestation.isValidFor(current) || !runCatching { attestationVerifier.verify(attestation) }.getOrDefault(false)) {
+            return EffectReconciliationResult.ATTESTATION_REJECTED
+        }
+        reconciliationHistory.add(attestation)
+        if (attestation.decision == EffectReconciliationDecision.UNRESOLVED) {
+            return EffectReconciliationResult.UNRESOLVED
+        }
+        effects[effectId] = current.copy(status = attestation.decision.toStatus())
         return EffectReconciliationResult.RECONCILED
     }
 
@@ -298,7 +401,11 @@ class InMemoryRuntimeStore : RuntimeStore {
  * Append-only journal. Any malformed record or unterminated tail fails closed:
  * callers cannot read, reserve, reconcile or append until the file is repaired.
  */
-class JournalRuntimeStore(private val file: File) : RuntimeStore {
+class JournalRuntimeStore(
+    private val file: File,
+    private val attestationVerifier: EffectAttestationVerifier = RejectAllEffectAttestations
+) : RuntimeStore {
+    private val gson = Gson()
     private val lock = Any()
 
     init {
@@ -364,13 +471,20 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
     }
 
     override fun reconcileEffect(
-        effectId: String,
-        decision: EffectReconciliationDecision
+        attestation: EffectReconciliationAttestation
     ): EffectReconciliationResult = synchronized(lock) {
+        val effectId = attestation.effectIdentity.effectId
         val current = replay().effects[effectId] ?: return@synchronized EffectReconciliationResult.NOT_FOUND
         if (current.status != EffectStatus.UNKNOWN) return@synchronized EffectReconciliationResult.NOT_UNKNOWN
-        append("X|${Codec.encode(effectId)}|${decision.toStatus().name}")
-        EffectReconciliationResult.RECONCILED
+        if (!attestation.isValidFor(current) || !runCatching { attestationVerifier.verify(attestation) }.getOrDefault(false)) {
+            return@synchronized EffectReconciliationResult.ATTESTATION_REJECTED
+        }
+        append("A|" + Codec.encode(gson.toJson(attestation)))
+        if (attestation.decision == EffectReconciliationDecision.UNRESOLVED) {
+            EffectReconciliationResult.UNRESOLVED
+        } else {
+            EffectReconciliationResult.RECONCILED
+        }
     }
 
     override fun currentEffect(effectId: String): EffectRecord? = synchronized(lock) {
@@ -452,6 +566,26 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
                     seenAttempts.add(effect.attemptId)
                     effects[effect.effectId] = effect
                 }
+                "A" -> {
+                    if (parts.size != 2) {
+                        throw IllegalStateException("malformed reconciliation attestation at line ${index + 1}")
+                    }
+                    val attestation = runCatching {
+                        gson.fromJson(Codec.decode(parts[1]), EffectReconciliationAttestation::class.java)
+                    }.getOrElse {
+                        throw IllegalStateException("invalid reconciliation attestation at line ${index + 1}", it)
+                    } ?: throw IllegalStateException("empty reconciliation attestation at line ${index + 1}")
+                    val effectId = attestation.effectIdentity.effectId
+                    val previous = effects[effectId]
+                        ?: throw IllegalStateException("attestation references unknown effect at line ${index + 1}")
+                    if (previous.status != EffectStatus.UNKNOWN || !attestation.isValidFor(previous) ||
+                        !runCatching { attestationVerifier.verify(attestation) }.getOrDefault(false)) {
+                        throw IllegalStateException("untrusted or stale reconciliation attestation at line ${index + 1}")
+                    }
+                    if (attestation.decision != EffectReconciliationDecision.UNRESOLVED) {
+                        effects[effectId] = previous.copy(status = attestation.decision.toStatus())
+                    }
+                }
                 "X" -> {
                     if (parts.size != 3) {
                         throw IllegalStateException("malformed effect transition at line ${index + 1}")
@@ -493,6 +627,7 @@ internal fun writeFully(channel: WritableByteChannel, buffer: ByteBuffer) {
 private fun EffectReconciliationDecision.toStatus(): EffectStatus = when (this) {
     EffectReconciliationDecision.CONFIRMED_COMPLETED -> EffectStatus.COMPLETED
     EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED -> EffectStatus.CONFIRMED_NOT_EXECUTED
+    EffectReconciliationDecision.UNRESOLVED -> EffectStatus.UNKNOWN
 }
 
 private data class RunRecord(

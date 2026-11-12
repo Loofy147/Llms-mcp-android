@@ -7,6 +7,33 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EffectBoundaryTest {
+    private val testAttestationVerifier = EffectAttestationVerifier { true }
+
+    private fun attestation(store: RuntimeStore, effectId: String, decision: EffectReconciliationDecision): EffectReconciliationAttestation {
+        val current = requireNotNull(store.currentEffect(effectId))
+        return EffectReconciliationAttestation(
+            schema = "open_system_one.effect_reconciliation_attestation.v0.1",
+            effectIdentity = EffectAttestationIdentity(
+                current.effectId, current.runId, current.capabilityId, current.actionId,
+                current.actionVersion, current.scope, current.attributedTo, current.parametersDigest
+            ),
+            attemptId = current.attemptId,
+            attemptNumber = current.attemptNumber,
+            decision = decision,
+            decidedAt = "2026-11-12T12:01:00Z",
+            authority = EffectAuthorityObservation("provider_api", "provider:test:v1", "observation:test",
+                "2026-11-12T12:00:30Z", "2026-11-12T12:00:31Z"),
+            evidence = EffectEvidenceReference("artifact:test", "sha256:" + "b".repeat(64)),
+            verifier = EffectVerifierRecord("verifier:test", "1.0.0",
+                if (decision == EffectReconciliationDecision.UNRESOLVED) "INCONCLUSIVE" else "PASS",
+                "2026-11-12T12:00:50Z"),
+            accountablePrincipal = EffectAccountablePrincipal("service", "service:test"),
+            authentication = EffectAuthenticationEnvelope("ed25519", "key:test",
+                "sha256:" + "c".repeat(64), "signature:test"),
+            reason = "Synthetic test attestation."
+        )
+    }
+
     @Test
     fun laterEffectFailureDoesNotEraseEarlierCompletedEffect() {
         val journal = File.createTempFile("effect-boundary", ".journal")
@@ -42,7 +69,7 @@ class EffectBoundaryTest {
                 }
             )
         )
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
         val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), executor, store)
 
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "two_effects"))
@@ -55,12 +82,12 @@ class EffectBoundaryTest {
 
         assertEquals(
             EffectReconciliationResult.NOT_UNKNOWN,
-            store.reconcileEffect(effectA, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            store.reconcileEffect(attestation(store, effectA, EffectReconciliationDecision.CONFIRMED_COMPLETED))
         )
         assertEquals(1, store.unknownEffects().count { it.effectId == effectB })
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(effectB, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            store.reconcileEffect(attestation(store, effectB, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED))
         )
     }
 
@@ -84,7 +111,7 @@ class EffectBoundaryTest {
 
     @Test
     fun runtimeFailsClosedWhenCompletionTransitionIsRejected() {
-        val delegate = InMemoryRuntimeStore()
+        val delegate = InMemoryRuntimeStore(testAttestationVerifier)
         val guardedStore = object : RuntimeStore by delegate {
             override fun completeEffect(effectId: String): EffectTransitionResult =
                 EffectTransitionResult.INVALID_TRANSITION

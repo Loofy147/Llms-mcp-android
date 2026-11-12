@@ -13,6 +13,46 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UnknownEffectReconciliationTest {
+    private val testAttestationVerifier = EffectAttestationVerifier { true }
+
+    private fun attestation(
+        store: RuntimeStore,
+        effectId: String,
+        decision: EffectReconciliationDecision
+    ): EffectReconciliationAttestation {
+        val current = store.currentEffect(effectId) ?: EffectRecord(
+            effectId, "run-1", "message.send", "send_once", 1, emptySet(),
+            "tester", mapOf("message" to "hello"), "attempt-1", 1,
+            "sha256:" + "a".repeat(64), EffectStatus.UNKNOWN
+        )
+        return EffectReconciliationAttestation(
+            schema = "open_system_one.effect_reconciliation_attestation.v0.1",
+            effectIdentity = EffectAttestationIdentity(
+                current.effectId, current.runId, current.capabilityId, current.actionId,
+                current.actionVersion, current.scope, current.attributedTo, current.parametersDigest
+            ),
+            attemptId = current.attemptId,
+            attemptNumber = current.attemptNumber,
+            decision = decision,
+            decidedAt = "2026-11-12T12:01:00Z",
+            authority = EffectAuthorityObservation(
+                "provider_api", "provider:test:v1", "observation:test",
+                "2026-11-12T12:00:30Z", "2026-11-12T12:00:31Z"
+            ),
+            evidence = EffectEvidenceReference("artifact:test", "sha256:" + "b".repeat(64)),
+            verifier = EffectVerifierRecord(
+                "verifier:test", "1.0.0",
+                if (decision == EffectReconciliationDecision.UNRESOLVED) "INCONCLUSIVE" else "PASS",
+                "2026-11-12T12:00:50Z"
+            ),
+            accountablePrincipal = EffectAccountablePrincipal("service", "service:test"),
+            authentication = EffectAuthenticationEnvelope(
+                "ed25519", "key:test", "sha256:" + "c".repeat(64), "signature:test"
+            ),
+            reason = "Synthetic test attestation; trust is supplied only by the test verifier."
+        )
+    }
+
     private fun invocation(effectId: String = "effect-1") = CapabilityInvocation(
         runId = "run-1",
         capabilityId = "message.send",
@@ -25,7 +65,7 @@ class UnknownEffectReconciliationTest {
 
     @Test
     fun unknownEffectIsEnumeratedAndCanBeConfirmedCompleted() {
-        val store = InMemoryRuntimeStore()
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
         val effect = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
@@ -36,26 +76,26 @@ class UnknownEffectReconciliationTest {
 
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            store.reconcileEffect(attestation(store, effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED))
         )
         assertTrue(store.unknownEffects().isEmpty())
 
         assertEquals(
             EffectReconciliationResult.NOT_UNKNOWN,
-            store.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            store.reconcileEffect(attestation(store, effect.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED))
         )
     }
 
     @Test
     fun confirmedNotExecutedAllowsControlledRetry() {
-        val store = InMemoryRuntimeStore()
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
         val effect = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(effect.effectId))
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            store.reconcileEffect(attestation(store, effect.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED))
         )
 
         val retry = effect.copy(attemptId = java.util.UUID.randomUUID().toString(), attemptNumber = 2)
@@ -65,7 +105,7 @@ class UnknownEffectReconciliationTest {
 
     @Test
     fun completedEffectCannotBeReconciled() {
-        val store = InMemoryRuntimeStore()
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
         val effect = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
@@ -73,7 +113,7 @@ class UnknownEffectReconciliationTest {
 
         assertEquals(
             EffectReconciliationResult.NOT_UNKNOWN,
-            store.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            store.reconcileEffect(attestation(store, effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED))
         )
     }
 
@@ -83,39 +123,39 @@ class UnknownEffectReconciliationTest {
         journal.deleteOnExit()
         val effect = invocation()
 
-        val first = JournalRuntimeStore(journal)
+        val first = JournalRuntimeStore(journal, testAttestationVerifier)
         assertEquals(EffectReservation.RESERVED, first.reserveEffects(listOf(effect)))
         first.markEffectUnknown(effect.effectId)
 
-        val restarted = JournalRuntimeStore(journal)
+        val restarted = JournalRuntimeStore(journal, testAttestationVerifier)
         assertEquals(effect.effectId, restarted.unknownEffects().single().effectId)
         assertEquals(EffectStatus.UNKNOWN, restarted.unknownEffects().single().status)
 
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            restarted.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            restarted.reconcileEffect(attestation(restarted, effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED))
         )
 
-        val afterRestart = JournalRuntimeStore(journal)
+        val afterRestart = JournalRuntimeStore(journal, testAttestationVerifier)
         assertTrue(afterRestart.unknownEffects().isEmpty())
         assertEquals(
             EffectReconciliationResult.NOT_UNKNOWN,
-            afterRestart.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            afterRestart.reconcileEffect(attestation(afterRestart, effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED))
         )
     }
 
     @Test
     fun missingEffectCannotBeReconciled() {
-        val store = InMemoryRuntimeStore()
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
         assertEquals(
             EffectReconciliationResult.NOT_FOUND,
-            store.reconcileEffect("missing", EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            store.reconcileEffect(attestation(store, "missing", EffectReconciliationDecision.CONFIRMED_COMPLETED))
         )
     }
 
     @Test
     fun unknownEffectCannotBeCompletedWithoutReconciliation() {
-        val store = InMemoryRuntimeStore()
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
         val effect = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
@@ -130,7 +170,7 @@ class UnknownEffectReconciliationTest {
 
     @Test
     fun completedEffectCannotBeMovedBackToUnknown() {
-        val store = InMemoryRuntimeStore()
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
         val effect = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
@@ -147,7 +187,7 @@ class UnknownEffectReconciliationTest {
     fun journalRejectsRunIdentityMismatchForAnExistingEffectId() {
         val journal = File.createTempFile("effect-run-identity", ".journal")
         journal.deleteOnExit()
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
         val original = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(original)))
@@ -163,13 +203,13 @@ class UnknownEffectReconciliationTest {
     fun journalFailsClosedOnMalformedTrailingRecord() {
         val journal = File.createTempFile("effect-corrupt-tail", ".journal")
         journal.deleteOnExit()
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
         val effect = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
         journal.appendText("X|not-valid-base64|UNKNOWN\\n")
 
-        val restarted = JournalRuntimeStore(journal)
+        val restarted = JournalRuntimeStore(journal, testAttestationVerifier)
         org.junit.Assert.assertThrows(IllegalStateException::class.java) {
             restarted.unknownEffects()
         }
@@ -182,7 +222,7 @@ class UnknownEffectReconciliationTest {
     fun journalRejectsIllegalStatusTransitionDuringReplay() {
         val journal = File.createTempFile("effect-invalid-transition", ".journal")
         journal.deleteOnExit()
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
         val effect = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
@@ -190,7 +230,7 @@ class UnknownEffectReconciliationTest {
         val encodedId = Base64.getUrlEncoder().withoutPadding()
             .encodeToString(effect.effectId.toByteArray(Charsets.UTF_8))
         journal.appendText("X|$encodedId|UNKNOWN\\n")
-        val restarted = JournalRuntimeStore(journal)
+        val restarted = JournalRuntimeStore(journal, testAttestationVerifier)
 
         org.junit.Assert.assertThrows(IllegalStateException::class.java) {
             restarted.unknownEffects()
@@ -202,14 +242,14 @@ class UnknownEffectReconciliationTest {
     fun confirmedNotExecutedRequiresANewAttemptId() {
         val journal = File.createTempFile("effect-attempt-identity", ".journal")
         journal.deleteOnExit()
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
         val original = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(original)))
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(original.effectId))
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            store.reconcileEffect(attestation(store, original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED))
         )
 
         assertEquals(
@@ -218,14 +258,14 @@ class UnknownEffectReconciliationTest {
         )
         val nextAttempt = original.copy(attemptId = java.util.UUID.randomUUID().toString(), attemptNumber = 2)
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(nextAttempt)))
-        assertTrue(JournalRuntimeStore(journal).unknownEffects().isEmpty())
+        assertTrue(JournalRuntimeStore(journal, testAttestationVerifier).unknownEffects().isEmpty())
     }
 
     @Test
     fun journalRejectsCorruptionInTheMiddleOfHistory() {
         val journal = File.createTempFile("effect-corrupt-middle", ".journal")
         journal.deleteOnExit()
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
         val effect = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
@@ -234,7 +274,7 @@ class UnknownEffectReconciliationTest {
         journal.appendText("NOT_A_RECORD\\nX|$encodedId|UNKNOWN\\n")
 
         org.junit.Assert.assertThrows(IllegalStateException::class.java) {
-            JournalRuntimeStore(journal).reserveEffects(listOf(invocation("other")))
+            JournalRuntimeStore(journal, testAttestationVerifier).reserveEffects(listOf(invocation("other")))
         }
     }
 
@@ -261,7 +301,7 @@ class UnknownEffectReconciliationTest {
 
     @Test
     fun missingEffectTransitionsReturnNotFound() {
-        val store = InMemoryRuntimeStore()
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
         assertEquals(EffectTransitionResult.NOT_FOUND, store.completeEffect("missing"))
         assertEquals(EffectTransitionResult.NOT_FOUND, store.markEffectUnknown("missing"))
     }
@@ -271,7 +311,7 @@ class UnknownEffectReconciliationTest {
     fun journalUnknownEffectCannotBeCompletedWithoutReconciliation() {
         val journal = File.createTempFile("journal-unknown-no-complete", ".journal")
         journal.deleteOnExit()
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
         val effect = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
@@ -280,14 +320,14 @@ class UnknownEffectReconciliationTest {
             EffectTransitionResult.INVALID_TRANSITION,
             store.completeEffect(effect.effectId)
         )
-        assertEquals(EffectStatus.UNKNOWN, JournalRuntimeStore(journal).unknownEffects().single().status)
+        assertEquals(EffectStatus.UNKNOWN, JournalRuntimeStore(journal, testAttestationVerifier).unknownEffects().single().status)
     }
 
     @Test
     fun journalCompletedEffectCannotBeMovedBackToUnknown() {
         val journal = File.createTempFile("journal-complete-no-unknown", ".journal")
         journal.deleteOnExit()
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
         val effect = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
@@ -296,12 +336,12 @@ class UnknownEffectReconciliationTest {
             EffectTransitionResult.INVALID_TRANSITION,
             store.markEffectUnknown(effect.effectId)
         )
-        assertTrue(JournalRuntimeStore(journal).unknownEffects().isEmpty())
+        assertTrue(JournalRuntimeStore(journal, testAttestationVerifier).unknownEffects().isEmpty())
     }
 
     @Test
     fun effectReservationRejectsIncompleteImmutableIdentity() {
-        val store = InMemoryRuntimeStore()
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
         val incomplete = invocation().copy(attributedTo = " ")
 
         assertEquals(
@@ -312,7 +352,7 @@ class UnknownEffectReconciliationTest {
 
     @Test
     fun effectIdentityConflictsWhenParametersChangeUnderSameEffectId() {
-        val store = InMemoryRuntimeStore()
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
         val original = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(original)))
@@ -325,7 +365,7 @@ class UnknownEffectReconciliationTest {
 
     @Test
     fun parameterDigestUsesUnsignedUtf8KeyOrdering() {
-        val store = InMemoryRuntimeStore()
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
         val effect = invocation().copy(
             parameters = mapOf("\uE000" to "bmp", "\uD83D\uDE00" to "astral")
         )
@@ -338,6 +378,47 @@ class UnknownEffectReconciliationTest {
         )
     }
 
+
+
+    @Test
+    fun defaultStoreRejectsBareOrUntrustedReconciliation() {
+        val store = InMemoryRuntimeStore()
+        val effect = invocation()
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
+        assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(effect.effectId))
+        assertEquals(
+            EffectReconciliationResult.ATTESTATION_REJECTED,
+            store.reconcileEffect(attestation(store, effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED))
+        )
+        assertEquals(EffectStatus.UNKNOWN, store.currentEffect(effect.effectId)?.status)
+    }
+
+    @Test
+    fun unresolvedAttestationIsPersistedButLeavesEffectUnknown() {
+        val journal = File.createTempFile("effect-unresolved-attestation", ".journal")
+        journal.deleteOnExit()
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
+        val effect = invocation()
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
+        assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(effect.effectId))
+        assertEquals(
+            EffectReconciliationResult.UNRESOLVED,
+            store.reconcileEffect(attestation(store, effect.effectId, EffectReconciliationDecision.UNRESOLVED))
+        )
+        assertEquals(EffectStatus.UNKNOWN, JournalRuntimeStore(journal, testAttestationVerifier).currentEffect(effect.effectId)?.status)
+    }
+
+    @Test
+    fun staleAttemptAttestationIsRejected() {
+        val store = InMemoryRuntimeStore(testAttestationVerifier)
+        val effect = invocation()
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
+        assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(effect.effectId))
+        val stale = attestation(store, effect.effectId, EffectReconciliationDecision.CONFIRMED_COMPLETED)
+            .copy(attemptId = "stale-attempt")
+        assertEquals(EffectReconciliationResult.ATTESTATION_REJECTED, store.reconcileEffect(stale))
+        assertEquals(EffectStatus.UNKNOWN, store.currentEffect(effect.effectId)?.status)
+    }
 
     private fun readKernelFixture(): Pair<ByteArray, JsonObject> {
         val stream = requireNotNull(
@@ -408,7 +489,7 @@ class UnknownEffectReconciliationTest {
 
         val journal = File.createTempFile("android-k-unknown-v03", ".journal")
         journal.deleteOnExit()
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
 
         vector.getAsJsonArray("steps").forEachIndexed { index, element ->
             val step = element.asJsonObject
@@ -431,7 +512,7 @@ class UnknownEffectReconciliationTest {
                 }
                 "reconcile" -> {
                     val decision = EffectReconciliationDecision.valueOf(step.get("decision").asString)
-                    store.reconcileEffect(effectId, decision).name
+                    store.reconcileEffect(attestation(store, effectId, decision)).name
                 }
                 else -> throw AssertionError("Unsupported K-UNKNOWN operation: $operation")
             }
@@ -459,14 +540,14 @@ class UnknownEffectReconciliationTest {
     fun journalRejectsAttemptNumberRegressionAndAttemptIdReuse() {
         val journal = File.createTempFile("attempt-number-replay", ".journal")
         journal.deleteOnExit()
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
         val original = invocation()
 
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(original)))
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(original.effectId))
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            store.reconcileEffect(attestation(store, original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED))
         )
 
         assertEquals(
@@ -484,7 +565,7 @@ class UnknownEffectReconciliationTest {
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(original.effectId))
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            store.reconcileEffect(original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            store.reconcileEffect(attestation(store, original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED))
         )
         assertEquals(
             EffectReservation.CONFLICT,
@@ -497,7 +578,7 @@ class UnknownEffectReconciliationTest {
             attemptNumber = 3
         )
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(attemptThree)))
-        assertEquals(3, JournalRuntimeStore(journal).currentEffect(original.effectId)?.attemptNumber)
+        assertEquals(3, JournalRuntimeStore(journal, testAttestationVerifier).currentEffect(original.effectId)?.attemptNumber)
     }
 
 }
