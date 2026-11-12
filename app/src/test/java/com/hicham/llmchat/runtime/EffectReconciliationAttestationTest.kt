@@ -2,10 +2,14 @@ package com.hicham.llmchat.runtime
 
 import java.io.File
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EffectReconciliationAttestationTest {
@@ -232,6 +236,66 @@ class EffectReconciliationAttestationTest {
         val retry = effect.copy(attemptId = "attempt-2", attemptNumber = 2)
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(retry)))
         assertEquals("attempt-2", store.currentEffect(effect.effectId)?.attemptId)
+    }
+
+    @Test
+    fun separateJournalInstancesSerializeConcurrentReconciliation() {
+        val journal = File.createTempFile("effect-concurrent-reconcile", ".journal")
+        journal.deleteOnExit()
+        val effect = invocation()
+        val firstStore = JournalRuntimeStore(journal)
+        val secondStore = JournalRuntimeStore(journal)
+        markUnknown(firstStore, effect)
+
+        val bothVerifying = CountDownLatch(2)
+        val releaseVerifiers = CountDownLatch(1)
+        val blockingVerifier = ReconciliationTrustVerifier { evidence, _ ->
+            bothVerifying.countDown()
+            check(releaseVerifiers.await(10, TimeUnit.SECONDS)) {
+                "timed out waiting for competing verifier"
+            }
+            val digest = effectReconciliationAttestationDigest(evidence)
+            TrustVerificationResult(
+                attestationRef = "synthetic-concurrent:$digest",
+                attestationDigest = digest,
+                trustPolicyRef = "synthetic-concurrent-policy:v1",
+                signatureValid = true,
+                authorityApplicable = true,
+                evidenceDigestVerified = true,
+                verifierPolicyValid = true,
+                principalAuthorized = true
+            )
+        }
+        val evidence = attestation(effect)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val first = executor.submit<EffectReconciliationResult> {
+                firstStore.reconcileEffect(effect.effectId, evidence, blockingVerifier)
+            }
+            val second = executor.submit<EffectReconciliationResult> {
+                secondStore.reconcileEffect(effect.effectId, evidence, blockingVerifier)
+            }
+
+            assertTrue("both callers should snapshot UNKNOWN before either verifies", bothVerifying.await(10, TimeUnit.SECONDS))
+            releaseVerifiers.countDown()
+
+            val results = listOf(
+                first.get(10, TimeUnit.SECONDS),
+                second.get(10, TimeUnit.SECONDS)
+            )
+            assertEquals(
+                setOf(EffectReconciliationResult.RECONCILED, EffectReconciliationResult.NOT_UNKNOWN),
+                results.toSet()
+            )
+            assertEquals(1, journal.readLines(Charsets.UTF_8).count { it.startsWith("A|") })
+            assertEquals(
+                EffectStatus.COMPLETED,
+                JournalRuntimeStore(journal).currentEffect(effect.effectId)?.status
+            )
+        } finally {
+            releaseVerifiers.countDown()
+            executor.shutdownNow()
+        }
     }
 
     @Test
