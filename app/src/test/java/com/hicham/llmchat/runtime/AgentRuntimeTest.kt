@@ -131,7 +131,7 @@ class AgentRuntimeTest {
     }
 
     @Test
-    fun idempotencyKeyProducesStableEffectIdentityAndBlocksReplay() {
+    fun idempotencyKeyReuseAcrossRunsFailsAsAnIdentityConflict() {
         var executions = 0
         val action = ActionDefinition(
             id = "send_once",
@@ -156,7 +156,7 @@ class AgentRuntimeTest {
         assertEquals(RunStatus.SUCCEEDED, first.status)
         assertEquals(RunStatus.FAILED, retry.status)
         assertEquals(1, executions)
-        assertEquals("Effect replay blocked; reconciliation required", retry.denialReason)
+        assertEquals("Effect identity conflict; execution blocked", retry.denialReason)
     }
 
     @Test
