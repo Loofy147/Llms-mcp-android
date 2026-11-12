@@ -46,9 +46,22 @@ data class EffectRecord(
  * Digest over a stable, unambiguous representation of the parameter map.
  * Length prefixes are UTF-8 byte lengths, and keys are sorted ordinally.
  */
+private fun compareUnsignedUtf8(left: String, right: String): Int {
+    val leftBytes = left.toByteArray(StandardCharsets.UTF_8)
+    val rightBytes = right.toByteArray(StandardCharsets.UTF_8)
+    val sharedLength = minOf(leftBytes.size, rightBytes.size)
+    for (index in 0 until sharedLength) {
+        val comparison = (leftBytes[index].toInt() and 0xff)
+            .compareTo(rightBytes[index].toInt() and 0xff)
+        if (comparison != 0) return comparison
+    }
+    return leftBytes.size.compareTo(rightBytes.size)
+}
+
 private fun canonicalParametersDigest(parameters: Map<String, String>): String {
     val canonical = buildString {
-        parameters.toSortedMap().forEach { (key, value) ->
+        parameters.keys.sortedWith(Comparator(::compareUnsignedUtf8)).forEach { key ->
+            val value = parameters.getValue(key)
             append(key.toByteArray(StandardCharsets.UTF_8).size)
             append(':')
             append(key)
