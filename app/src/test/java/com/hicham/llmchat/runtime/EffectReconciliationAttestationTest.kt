@@ -30,7 +30,7 @@ class EffectReconciliationAttestationTest {
         effect: CapabilityInvocation,
         decision: EffectReconciliationDecision = EffectReconciliationDecision.CONFIRMED_COMPLETED
     ) : EffectReconciliationAttestation {
-        val unsigned = EffectReconciliationAttestation( EffectReconciliationAttestation(
+        val unsigned = EffectReconciliationAttestation(
         schema = "open_system_one.effect_reconciliation_attestation.v0.1",
         effectIdentity = EffectIdentityAttestation(
             schema = "open_system_one.effect_identity.v0.1",
