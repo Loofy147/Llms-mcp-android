@@ -55,7 +55,7 @@ class UnknownEffectReconciliationTest {
             store.reconcileEffect(effect.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
         )
 
-        val retry = effect.copy(attemptId = java.util.UUID.randomUUID().toString())
+        val retry = effect.copy(attemptId = java.util.UUID.randomUUID().toString(), attemptNumber = 2)
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(retry)))
         assertTrue(store.unknownEffects().isEmpty())
     }
@@ -213,7 +213,7 @@ class UnknownEffectReconciliationTest {
             EffectReservation.CONFLICT,
             store.reserveEffects(listOf(original))
         )
-        val nextAttempt = original.copy(attemptId = java.util.UUID.randomUUID().toString())
+        val nextAttempt = original.copy(attemptId = java.util.UUID.randomUUID().toString(), attemptNumber = 2)
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(nextAttempt)))
         assertTrue(JournalRuntimeStore(journal).unknownEffects().isEmpty())
     }
