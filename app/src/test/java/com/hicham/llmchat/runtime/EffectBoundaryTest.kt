@@ -81,4 +81,35 @@ class EffectBoundaryTest {
         assertEquals(RunStatus.FAILED, run.status)
         assertEquals("planning exploded", run.denialReason)
     }
+
+    @Test
+    fun runtimeFailsClosedWhenCompletionTransitionIsRejected() {
+        val delegate = InMemoryRuntimeStore()
+        val guardedStore = object : RuntimeStore by delegate {
+            override fun completeEffect(effectId: String): EffectTransitionResult =
+                EffectTransitionResult.INVALID_TRANSITION
+        }
+        val action = ActionDefinition(
+            id = "completion_rejected",
+            version = 1,
+            purpose = "completion persistence rejection test",
+            capabilities = listOf(CapabilityDescriptor("effect.write", EffectClass.REVERSIBLE)),
+            reduce = { _, _ -> ActionExecution() },
+            plan = { ActionPlan(listOf(CapabilityInvocationSpec("effect.write"))) }
+        )
+        val runtime = AgentRuntime(
+            ActionCatalog(listOf(action)),
+            PolicyEngine(),
+            RegistryCapabilityExecutor(
+                mapOf("effect.write" to { CapabilityExecution() })
+            ),
+            guardedStore
+        )
+
+        val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "completion_rejected"))
+
+        assertEquals(RunStatus.FAILED, run.status)
+        assertEquals(1, delegate.unknownEffects().size)
+    }
+
 }
