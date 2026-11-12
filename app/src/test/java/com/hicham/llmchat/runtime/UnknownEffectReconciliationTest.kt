@@ -5,6 +5,9 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.WritableByteChannel
 import java.util.Base64
+import java.security.MessageDigest
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -333,6 +336,168 @@ class UnknownEffectReconciliationTest {
             "sha256:f9e5a1137f80ad7a067063f2b8adb0aea997147ec903dc58af105e91a8de64ec",
             store.unknownEffects().single().parametersDigest
         )
+    }
+
+
+    private fun readKernelFixture(): Pair<ByteArray, JsonObject> {
+        val stream = requireNotNull(
+            javaClass.classLoader?.getResourceAsStream("kernel-conformance-fixtures.v0.3.json")
+        ) { "Missing pinned kernel conformance fixture v0.3" }
+        val bytes = stream.use { it.readBytes() }
+        val document = JsonParser.parseString(String(bytes, Charsets.UTF_8)).asJsonObject
+        return bytes to document
+    }
+
+    private fun gitBlobSha(bytes: ByteArray): String {
+        val header = "blob ${bytes.size}\u0000".toByteArray(Charsets.UTF_8)
+        val digest = MessageDigest.getInstance("SHA-1").digest(header + bytes)
+        return digest.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+    }
+
+    private fun journalEffectEventCount(journal: File, effectId: String): Int {
+        if (!journal.exists()) return 0
+        return journal.readLines(Charsets.UTF_8).count { line ->
+            val parts = line.split('|')
+            if (parts.size < 2 || parts[0] !in setOf("E", "E2", "E3", "X")) {
+                false
+            } else {
+                val decoded = runCatching {
+                    String(Base64.getUrlDecoder().decode(parts[1]), Charsets.UTF_8)
+                }.getOrElse { throw IllegalStateException("Malformed effect ID in test journal", it) }
+                decoded == effectId
+            }
+        }
+    }
+
+    private fun invocationFromFixture(effect: JsonObject, attemptId: String, attemptNumber: Int) =
+        CapabilityInvocation(
+            runId = effect.get("run_id").asString,
+            capabilityId = effect.get("capability_id").asString,
+            actionId = effect.get("action_id").asString,
+            actionVersion = effect.get("action_version").asInt,
+            effectId = effect.get("effect_id").asString,
+            scope = effect.getAsJsonArray("scope").map { it.asString }.toSet(),
+            attributedTo = effect.get("attributed_to").asString,
+            parameters = effect.getAsJsonObject("parameters").entrySet()
+                .associate { it.key to it.value.asString },
+            attemptId = attemptId,
+            attemptNumber = attemptNumber
+        )
+
+    @Test
+    fun androidJournalExecutesSharedKernelUnknownVectorV03() {
+        val (fixtureBytes, fixture) = readKernelFixture()
+        assertEquals(
+            "7755948e1de7271d9361790af34ee604810de70e",
+            gitBlobSha(fixtureBytes)
+        )
+        assertEquals(
+            "open_system_one.kernel_conformance_fixtures.v0.3",
+            fixture.get("schema").asString
+        )
+
+        val unknown = fixture.getAsJsonArray("cases")
+            .map { it.asJsonObject }
+            .single { it.get("id").asString == "K-UNKNOWN-01" }
+        val vector = unknown.getAsJsonArray("test_vectors")[0].asJsonObject
+        assertEquals(
+            "open_system_one.unknown_effect_test_vector.v0.2",
+            vector.get("schema").asString
+        )
+        val effectSpecs = vector.getAsJsonObject("effects")
+
+        val journal = File.createTempFile("android-k-unknown-v03", ".journal")
+        journal.deleteOnExit()
+        val store = JournalRuntimeStore(journal)
+
+        vector.getAsJsonArray("steps").forEachIndexed { index, element ->
+            val step = element.asJsonObject
+            val effectRef = step.get("effect_ref").asString
+            val effectSpec = effectSpecs.getAsJsonObject(effectRef)
+            val effectId = effectSpec.get("effect_id").asString
+            val attemptId = step.get("attempt_id")?.asString
+                ?: effectSpec.get("attempt_id").asString
+            val attemptNumber = step.get("attempt_number")?.asInt
+                ?: effectSpec.get("attempt_number").asInt
+            val invocation = invocationFromFixture(effectSpec, attemptId, attemptNumber)
+            val beforeCount = journalEffectEventCount(journal, effectId)
+
+            val operation = step.get("op").asString
+            val actualResult = when (operation) {
+                "reserve" -> store.reserveEffects(listOf(invocation)).name
+                "mark_unknown" -> when (store.markEffectUnknown(effectId)) {
+                    EffectTransitionResult.APPLIED -> "UNKNOWN"
+                    else -> store.markEffectUnknown(effectId).name
+                }
+                "reconcile" -> {
+                    val decision = EffectReconciliationDecision.valueOf(step.get("decision").asString)
+                    store.reconcileEffect(effectId, decision).name
+                }
+                else -> throw AssertionError("Unsupported K-UNKNOWN operation: $operation")
+            }
+
+            val current = store.currentEffect(effectId)
+            val actualStatus = current?.status?.name
+            val afterCount = journalEffectEventCount(journal, effectId)
+            val expected = step.getAsJsonObject("expected")
+            val expectedResult = expected.get("result").asString
+            val expectedStatus = expected.get("status").asString
+            val expectedDelta = expected.get("record_count_delta").asInt
+
+            assertEquals("step ${index + 1} result", expectedResult, actualResult)
+            assertEquals("step ${index + 1} status", expectedStatus, actualStatus)
+            assertEquals("step ${index + 1} record delta", expectedDelta, afterCount - beforeCount)
+
+            if (operation == "reserve" && expectedResult == "RESERVED") {
+                assertEquals("step ${index + 1} attempt ID", attemptId, current?.attemptId)
+                assertEquals("step ${index + 1} attempt number", attemptNumber, current?.attemptNumber)
+            }
+        }
+    }
+
+    @Test
+    fun journalRejectsAttemptNumberRegressionAndAttemptIdReuse() {
+        val journal = File.createTempFile("attempt-number-replay", ".journal")
+        journal.deleteOnExit()
+        val store = JournalRuntimeStore(journal)
+        val original = invocation()
+
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(original)))
+        assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(original.effectId))
+        assertEquals(
+            EffectReconciliationResult.RECONCILED,
+            store.reconcileEffect(original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+        )
+
+        assertEquals(
+            EffectReservation.CONFLICT,
+            store.reserveEffects(listOf(original.copy(
+                attemptId = java.util.UUID.randomUUID().toString(),
+                attemptNumber = 1
+            )))
+        )
+        val attemptTwo = original.copy(
+            attemptId = java.util.UUID.randomUUID().toString(),
+            attemptNumber = 2
+        )
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(attemptTwo)))
+        assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(original.effectId))
+        assertEquals(
+            EffectReconciliationResult.RECONCILED,
+            store.reconcileEffect(original.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+        )
+        assertEquals(
+            EffectReservation.CONFLICT,
+            store.reserveEffects(listOf(attemptTwo.copy(
+                attemptNumber = 3
+            )))
+        )
+        val attemptThree = attemptTwo.copy(
+            attemptId = java.util.UUID.randomUUID().toString(),
+            attemptNumber = 3
+        )
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(attemptThree)))
+        assertEquals(3, JournalRuntimeStore(journal).currentEffect(original.effectId)?.attemptNumber)
     }
 
 }
