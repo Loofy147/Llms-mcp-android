@@ -42,7 +42,7 @@ class EffectBoundaryTest {
                 }
             )
         )
-        val store = JournalRuntimeStore(journal)
+        val store = JournalRuntimeStore(journal, testAttestationVerifier)
         val runtime = AgentRuntime(ActionCatalog(listOf(action)), PolicyEngine(), executor, store)
 
         val run = runtime.activate(ActivationRequest(ActivationSource.USER_UI, "two_effects"))
@@ -84,7 +84,7 @@ class EffectBoundaryTest {
 
     @Test
     fun runtimeFailsClosedWhenCompletionTransitionIsRejected() {
-        val delegate = InMemoryRuntimeStore()
+        val delegate = InMemoryRuntimeStore(testAttestationVerifier)
         val guardedStore = object : RuntimeStore by delegate {
             override fun completeEffect(effectId: String): EffectTransitionResult =
                 EffectTransitionResult.INVALID_TRANSITION
