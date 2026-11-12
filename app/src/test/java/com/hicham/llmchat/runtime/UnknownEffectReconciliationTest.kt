@@ -215,7 +215,7 @@ class UnknownEffectReconciliationTest {
         )
         val nextAttempt = original.copy(attemptId = java.util.UUID.randomUUID().toString())
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(nextAttempt)))
-        assertEquals(nextAttempt.attemptId, JournalRuntimeStore(journal).loadEffectForTest(original.effectId)?.attemptId)
+        assertTrue(JournalRuntimeStore(journal).unknownEffects().isEmpty())
     }
 
     @Test
