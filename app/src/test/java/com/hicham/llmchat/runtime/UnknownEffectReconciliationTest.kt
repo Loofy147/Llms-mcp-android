@@ -263,4 +263,60 @@ class UnknownEffectReconciliationTest {
         assertEquals(EffectTransitionResult.NOT_FOUND, store.markEffectUnknown("missing"))
     }
 
+
+    @Test
+    fun journalUnknownEffectCannotBeCompletedWithoutReconciliation() {
+        val journal = File.createTempFile("journal-unknown-no-complete", ".journal")
+        journal.deleteOnExit()
+        val store = JournalRuntimeStore(journal)
+        val effect = invocation()
+
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
+        assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(effect.effectId))
+        assertEquals(
+            EffectTransitionResult.INVALID_TRANSITION,
+            store.completeEffect(effect.effectId)
+        )
+        assertEquals(EffectStatus.UNKNOWN, JournalRuntimeStore(journal).unknownEffects().single().status)
+    }
+
+    @Test
+    fun journalCompletedEffectCannotBeMovedBackToUnknown() {
+        val journal = File.createTempFile("journal-complete-no-unknown", ".journal")
+        journal.deleteOnExit()
+        val store = JournalRuntimeStore(journal)
+        val effect = invocation()
+
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
+        assertEquals(EffectTransitionResult.APPLIED, store.completeEffect(effect.effectId))
+        assertEquals(
+            EffectTransitionResult.INVALID_TRANSITION,
+            store.markEffectUnknown(effect.effectId)
+        )
+        assertTrue(JournalRuntimeStore(journal).unknownEffects().isEmpty())
+    }
+
+    @Test
+    fun effectReservationRejectsIncompleteImmutableIdentity() {
+        val store = InMemoryRuntimeStore()
+        val incomplete = invocation().copy(attributedTo = " ")
+
+        assertEquals(
+            EffectReservation.CONFLICT,
+            store.reserveEffects(listOf(incomplete))
+        )
+    }
+
+    @Test
+    fun effectIdentityConflictsWhenParametersChangeUnderSameEffectId() {
+        val store = InMemoryRuntimeStore()
+        val original = invocation()
+
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(original)))
+        assertEquals(
+            EffectReservation.CONFLICT,
+            store.reserveEffects(listOf(original.copy(parameters = mapOf("message" to "changed"))))
+        )
+    }
+
 }
