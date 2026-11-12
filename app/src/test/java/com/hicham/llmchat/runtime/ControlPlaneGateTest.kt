@@ -61,7 +61,11 @@ class ControlPlaneGateTest {
         assertEquals(EffectStatus.UNKNOWN, restartedStore.unknownEffects().single().status)
         assertEquals(
             EffectReconciliationResult.RECONCILED,
-            restartedStore.reconcileEffect(invocation.effectId, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED)
+            TestReconciliationSupport.reconcile(
+                restartedStore,
+                invocation,
+                EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED
+            )
         )
         assertTrue(restartedStore.unknownEffects().isEmpty())
         val retry = invocation.copy(attemptId = java.util.UUID.randomUUID().toString(), attemptNumber = 2)
