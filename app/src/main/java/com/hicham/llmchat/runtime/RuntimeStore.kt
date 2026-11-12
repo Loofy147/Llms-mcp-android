@@ -581,7 +581,12 @@ class InMemoryRuntimeStore : RuntimeStore {
         }
 
         incoming.forEach {
-            effects[it.effectId] = it
+            val previous = effects[it.effectId]
+            effects[it.effectId] = if (previous?.reconciliationAttestation != null) {
+                it.copy(reconciliationAttestation = previous.reconciliationAttestation)
+            } else {
+                it
+            }
             usedAttemptIds.getOrPut(it.effectId) { linkedSetOf() }.add(it.attemptId)
         }
         return EffectReservation.RESERVED
@@ -894,6 +899,9 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
                     }
                     val attemptNumber = parts[3].toIntOrNull()
                         ?: throw IllegalStateException("invalid reconciliation attempt number at line ${index + 1}")
+                    if (attemptNumber < 1) {
+                        throw IllegalStateException("invalid reconciliation attempt number at line ${index + 1}")
+                    }
                     val decision = runCatching { EffectReconciliationDecision.valueOf(parts[4]) }.getOrElse {
                         throw IllegalStateException("invalid reconciliation decision at line ${index + 1}", it)
                     }
