@@ -3,6 +3,7 @@ package com.hicham.llmchat.runtime
 import java.io.File
 import java.util.Base64
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import com.google.gson.JsonParser
@@ -105,9 +106,13 @@ class EffectReconciliationAttestationTest {
     }
 
     private class ArtifactResolvingVerifier : ReconciliationTrustVerifier {
-        private val artifacts = linkedMapOf<String, EffectReconciliationAttestation>()
-        var resolverAvailable = true
-        var signatureValid = true
+        private val artifacts = ConcurrentHashMap<String, EffectReconciliationAttestation>()
+        @Volatile var resolverAvailable = true
+        @Volatile var signatureValid = true
+        @Volatile var authorityApplicable = true
+        @Volatile var evidenceDigestVerified = true
+        @Volatile var verifierPolicyValid = true
+        @Volatile var principalAuthorized = true
 
         override fun verify(
             attestation: EffectReconciliationAttestation,
@@ -121,10 +126,10 @@ class EffectReconciliationAttestationTest {
                 attestationDigest = digest,
                 trustPolicyRef = "synthetic-trust-policy:v1",
                 signatureValid = signatureValid,
-                authorityApplicable = true,
-                evidenceDigestVerified = true,
-                verifierPolicyValid = true,
-                principalAuthorized = true
+                authorityApplicable = authorityApplicable,
+                evidenceDigestVerified = evidenceDigestVerified,
+                verifierPolicyValid = verifierPolicyValid,
+                principalAuthorized = principalAuthorized
             )
         }
 
@@ -515,6 +520,118 @@ class EffectReconciliationAttestationTest {
             EffectStatus.CONFIRMED_NOT_EXECUTED,
             JournalRuntimeStore(journal).currentEffect(effect.effectId)?.status
         )
+    }
+
+    @Test
+    fun everyFreshTrustAssertionIsRequiredBeforeRetry() {
+        val cases: List<Pair<String, (ArtifactResolvingVerifier) -> Unit>> = listOf(
+            "signature" to { it.signatureValid = false },
+            "authority" to { it.authorityApplicable = false },
+            "evidence digest" to { it.evidenceDigestVerified = false },
+            "verifier policy" to { it.verifierPolicyValid = false },
+            "principal authorization" to { it.principalAuthorized = false }
+        )
+
+        cases.forEachIndexed { index, caseItem ->
+            val journal = File.createTempFile("effect-retry-trust-$index", ".journal")
+            journal.deleteOnExit()
+            val effect = invocation("effect-retry-trust-$index")
+            val trust = ArtifactResolvingVerifier()
+            val store = JournalRuntimeStore(journal)
+            markUnknown(store, effect)
+            val evidence = attestation(
+                effect,
+                EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED
+            )
+            assertEquals(
+                EffectReconciliationResult.RECONCILED,
+                store.reconcileEffect(effect.effectId, evidence, trust)
+            )
+
+            caseItem.second(trust)
+            val retry = effect.copy(
+                attemptId = "attempt-retry-trust-$index-2",
+                attemptNumber = 2
+            )
+            val beforeCount = journal.readLines(Charsets.UTF_8).size
+            assertEquals(
+                "retry must fail when ${caseItem.first} trust is rejected",
+                EffectReservation.TRUST_REJECTED,
+                JournalRuntimeStore(journal).reserveEffects(listOf(retry), trust)
+            )
+            assertEquals(beforeCount, journal.readLines(Charsets.UTF_8).size)
+            assertEquals(
+                EffectStatus.CONFIRMED_NOT_EXECUTED,
+                JournalRuntimeStore(journal).currentEffect(effect.effectId)?.status
+            )
+        }
+    }
+
+    @Test
+    fun replayRejectsAlteredOrIncompleteE4RetryAuthorization() {
+        val journal = File.createTempFile("effect-retry-e4-corrupt", ".journal")
+        journal.deleteOnExit()
+        val effect = invocation("effect-retry-e4-corrupt")
+        val trust = ArtifactResolvingVerifier()
+        val store = JournalRuntimeStore(journal)
+        markUnknown(store, effect)
+        assertEquals(
+            EffectReconciliationResult.RECONCILED,
+            store.reconcileEffect(
+                effect.effectId,
+                attestation(effect, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED),
+                trust
+            )
+        )
+        val retry = effect.copy(attemptId = "attempt-e4-2", attemptNumber = 2)
+        assertEquals(
+            EffectReservation.RESERVED,
+            JournalRuntimeStore(journal).reserveEffects(listOf(retry), trust)
+        )
+
+        val records = journal.readLines(Charsets.UTF_8).toMutableList()
+        val retryIndex = records.indexOfLast { it.startsWith("E4|") }
+        assertTrue("retry must be represented by an E4 event", retryIndex >= 0)
+        val parts = records[retryIndex].split('|').toMutableList()
+        assertEquals(21, parts.size)
+        parts[16] = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(("sha256:" + "f".repeat(64)).toByteArray(Charsets.UTF_8))
+        records[retryIndex] = parts.joinToString("|")
+        journal.writeText(records.joinToString("\n", postfix = "\n"), Charsets.UTF_8)
+
+        assertThrows(IllegalStateException::class.java) {
+            JournalRuntimeStore(journal).currentEffect(effect.effectId)
+        }
+
+        val incomplete = File.createTempFile("effect-retry-e4-incomplete", ".journal")
+        incomplete.deleteOnExit()
+        val cleanJournal = File.createTempFile("effect-retry-e4-clean", ".journal")
+        cleanJournal.deleteOnExit()
+        val cleanEffect = invocation("effect-retry-e4-incomplete")
+        val cleanTrust = ArtifactResolvingVerifier()
+        val cleanStore = JournalRuntimeStore(cleanJournal)
+        markUnknown(cleanStore, cleanEffect)
+        assertEquals(
+            EffectReconciliationResult.RECONCILED,
+            cleanStore.reconcileEffect(
+                cleanEffect.effectId,
+                attestation(cleanEffect, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED),
+                cleanTrust
+            )
+        )
+        val cleanRetry = cleanEffect.copy(attemptId = "attempt-e4-incomplete-2", attemptNumber = 2)
+        assertEquals(
+            EffectReservation.RESERVED,
+            JournalRuntimeStore(cleanJournal).reserveEffects(listOf(cleanRetry), cleanTrust)
+        )
+        val incompleteRecords = cleanJournal.readLines(Charsets.UTF_8).toMutableList()
+        val incompleteIndex = incompleteRecords.indexOfLast { it.startsWith("E4|") }
+        val incompleteParts = incompleteRecords[incompleteIndex].split('|')
+        incompleteRecords[incompleteIndex] = incompleteParts.dropLast(1).joinToString("|")
+        incomplete.writeText(incompleteRecords.joinToString("\n", postfix = "\n"), Charsets.UTF_8)
+        assertThrows(IllegalStateException::class.java) {
+            JournalRuntimeStore(incomplete).currentEffect(cleanEffect.effectId)
+        }
     }
 
     @Test
