@@ -18,7 +18,10 @@ import kotlin.concurrent.withLock
 interface RuntimeStore {
     fun saveRun(run: Run)
     fun loadRun(runId: String, catalog: ActionCatalog): Run?
-    fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation
+    fun reserveEffects(
+        invocations: List<CapabilityInvocation>,
+        retryTrustVerifier: ReconciliationTrustVerifier? = null
+    ): EffectReservation
     fun completeEffect(effectId: String): EffectTransitionResult
     fun markEffectUnknown(effectId: String): EffectTransitionResult
 
@@ -41,7 +44,15 @@ interface RuntimeStore {
     fun recoverInterruptedEffects(): Int
 }
 
-enum class EffectReservation { RESERVED, REPLAY_BLOCKED, CONFLICT }
+enum class EffectReservation {
+    RESERVED,
+    REPLAY_BLOCKED,
+    CONFLICT,
+    TRUST_UNAVAILABLE,
+    TRUST_REJECTED,
+    RECONCILIATION_REVALIDATION_REQUIRED,
+    RETRY_AUTHORIZATION_STALE
+}
 enum class EffectTransitionResult { APPLIED, NOT_FOUND, INVALID_TRANSITION }
 enum class EffectReconciliationDecision { CONFIRMED_COMPLETED, CONFIRMED_NOT_EXECUTED, UNRESOLVED }
 enum class EffectReconciliationResult {
@@ -125,6 +136,16 @@ fun interface ReconciliationTrustVerifier {
         attestation: EffectReconciliationAttestation,
         expectedEffect: EffectRecord
     ): TrustVerificationResult
+
+    /**
+     * Resolve the complete, immutable attestation by its previously trusted reference
+     * and digest. The default deliberately fails closed for retry authorization while
+     * retaining SAM compatibility for existing verifier implementations.
+     */
+    fun resolve(
+        attestationRef: String,
+        attestationDigest: String
+    ): EffectReconciliationAttestation? = null
 }
 
 /** Audit pointer appended after a trusted reconciliation; the full signed attestation remains addressable by digest/ref. */
@@ -145,6 +166,17 @@ data class EffectReconciliationAudit(
     val principalRef: String
 )
 
+data class EffectRetryAuthorization(
+    val previousAttemptId: String,
+    val previousAttemptNumber: Int,
+    val attestationRef: String,
+    val attestationDigest: String,
+    val trustPolicyRef: String,
+    val authorizedAttemptId: String,
+    val authorizedAttemptNumber: Int,
+    val revalidatedAt: String
+)
+
 data class EffectRecord(
     val effectId: String,
     val runId: String,
@@ -158,7 +190,8 @@ data class EffectRecord(
     val attemptNumber: Int,
     val parametersDigest: String,
     val status: EffectStatus,
-    val reconciliationAttestation: EffectReconciliationAudit? = null
+    val reconciliationAttestation: EffectReconciliationAudit? = null,
+    val retryAuthorization: EffectRetryAuthorization? = null
 )
 
 /**
@@ -470,6 +503,88 @@ private fun prepareReconciliation(
     )
 }
 
+private fun prepareRetryAuthorization(
+    previous: EffectRecord,
+    nextAttempt: CapabilityInvocation,
+    trustVerifier: ReconciliationTrustVerifier?
+): Pair<EffectReservation?, EffectRetryAuthorization?> {
+    if (trustVerifier == null) return EffectReservation.TRUST_UNAVAILABLE to null
+
+    val priorAudit = previous.reconciliationAttestation
+        ?: return EffectReservation.RECONCILIATION_REVALIDATION_REQUIRED to null
+    if (
+        previous.status != EffectStatus.CONFIRMED_NOT_EXECUTED ||
+        priorAudit.decision != EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED ||
+        priorAudit.attemptId != previous.attemptId ||
+        priorAudit.attemptNumber != previous.attemptNumber
+    ) {
+        return EffectReservation.RECONCILIATION_REVALIDATION_REQUIRED to null
+    }
+
+    val resolved = runCatching {
+        trustVerifier.resolve(priorAudit.attestationRef, priorAudit.attestationDigest)
+    }.getOrNull() ?: return EffectReservation.RECONCILIATION_REVALIDATION_REQUIRED to null
+
+    val resolvedDigest = runCatching {
+        effectReconciliationAttestationDigest(resolved)
+    }.getOrNull()
+    if (resolvedDigest != priorAudit.attestationDigest) {
+        return EffectReservation.TRUST_REJECTED to null
+    }
+    if (resolved.decision != EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED) {
+        return EffectReservation.TRUST_REJECTED to null
+    }
+
+    val (error, refreshedAudit) = prepareReconciliation(
+        resolved,
+        previous,
+        trustVerifier
+    )
+    if (error != null) {
+        return EffectReservation.TRUST_REJECTED to null
+    }
+    val refreshed = requireNotNull(refreshedAudit)
+    if (
+        refreshed.attestationRef != priorAudit.attestationRef ||
+        refreshed.attestationDigest != priorAudit.attestationDigest ||
+        refreshed.decision != EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED
+    ) {
+        return EffectReservation.TRUST_REJECTED to null
+    }
+
+    return null to EffectRetryAuthorization(
+        previousAttemptId = previous.attemptId,
+        previousAttemptNumber = previous.attemptNumber,
+        attestationRef = refreshed.attestationRef,
+        attestationDigest = refreshed.attestationDigest,
+        trustPolicyRef = refreshed.trustPolicyRef,
+        authorizedAttemptId = nextAttempt.attemptId,
+        authorizedAttemptNumber = nextAttempt.attemptNumber,
+        revalidatedAt = OffsetDateTime.now().toString()
+    )
+}
+
+private fun validRetryAuthorization(
+    authorization: EffectRetryAuthorization,
+    previous: StoredEffect,
+    next: StoredEffect
+): Boolean {
+    val priorAudit = previous.reconciliationAttestation ?: return false
+    return previous.status == EffectStatus.CONFIRMED_NOT_EXECUTED &&
+        priorAudit.decision == EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED &&
+        priorAudit.attemptId == previous.attemptId &&
+        priorAudit.attemptNumber == previous.attemptNumber &&
+        authorization.previousAttemptId == previous.attemptId &&
+        authorization.previousAttemptNumber == previous.attemptNumber &&
+        authorization.attestationRef == priorAudit.attestationRef &&
+        authorization.attestationDigest == priorAudit.attestationDigest &&
+        authorization.trustPolicyRef.isNotBlank() &&
+        authorization.authorizedAttemptId == next.attemptId &&
+        authorization.authorizedAttemptNumber == next.attemptNumber &&
+        next.attemptNumber == previous.attemptNumber + 1 &&
+        validOffsetTimestamp(authorization.revalidatedAt)
+}
+
 private data class StoredEffect(
     val effectId: String,
     val runId: String,
@@ -483,7 +598,8 @@ private data class StoredEffect(
     val attemptNumber: Int,
     val parametersDigest: String,
     val status: EffectStatus,
-    val reconciliationAttestation: EffectReconciliationAudit? = null
+    val reconciliationAttestation: EffectReconciliationAudit? = null,
+    val retryAuthorization: EffectRetryAuthorization? = null
 ) {
     fun hasValidIdentity(): Boolean =
         effectId.isNotBlank() &&
@@ -513,25 +629,40 @@ private data class StoredEffect(
     fun record() = EffectRecord(
         effectId, runId, capabilityId, actionId, actionVersion, scope,
         attributedTo, parameters, attemptId, attemptNumber, parametersDigest, status,
-        reconciliationAttestation
+        reconciliationAttestation, retryAuthorization
     )
 
-    /** E3 adds the monotonic attempt number; older E/E2 events remain readable. */
-    fun encode(): String = listOf(
-        "E3",
-        Codec.encode(effectId),
-        Codec.encode(runId),
-        Codec.encode(capabilityId),
-        Codec.encode(actionId),
-        actionVersion.toString(),
-        Codec.encodeSet(scope),
-        Codec.encode(attributedTo),
-        Codec.encodeMap(parameters),
-        Codec.encode(parametersDigest),
-        Codec.encode(attemptId),
-        attemptNumber.toString(),
-        status.name
-    ).joinToString("|")
+    /** E3 is a normal reservation; E4 binds a retry to fresh trust revalidation. */
+    fun encode(): String {
+        val fields = listOf(
+            Codec.encode(effectId),
+            Codec.encode(runId),
+            Codec.encode(capabilityId),
+            Codec.encode(actionId),
+            actionVersion.toString(),
+            Codec.encodeSet(scope),
+            Codec.encode(attributedTo),
+            Codec.encodeMap(parameters),
+            Codec.encode(parametersDigest),
+            Codec.encode(attemptId),
+            attemptNumber.toString(),
+            status.name
+        )
+        val authorization = retryAuthorization
+            ?: return (listOf("E3") + fields).joinToString("|")
+        return (
+            listOf("E4") + fields + listOf(
+                Codec.encode(authorization.previousAttemptId),
+                authorization.previousAttemptNumber.toString(),
+                Codec.encode(authorization.attestationRef),
+                Codec.encode(authorization.attestationDigest),
+                Codec.encode(authorization.trustPolicyRef),
+                Codec.encode(authorization.authorizedAttemptId),
+                authorization.authorizedAttemptNumber.toString(),
+                Codec.encode(authorization.revalidatedAt)
+            )
+        ).joinToString("|")
+    }
 
     companion object {
         fun from(invocation: CapabilityInvocation, status: EffectStatus) = StoredEffect(
@@ -596,6 +727,30 @@ private data class StoredEffect(
                     attemptNumber = parts[11].toInt(),
                     status = EffectStatus.valueOf(parts[12])
                 )
+                parts.size == 21 && parts[0] == "E4" -> StoredEffect(
+                    effectId = Codec.decode(parts[1]),
+                    runId = Codec.decode(parts[2]),
+                    capabilityId = Codec.decode(parts[3]),
+                    actionId = Codec.decode(parts[4]),
+                    actionVersion = parts[5].toInt(),
+                    scope = Codec.decodeSet(parts[6]),
+                    attributedTo = Codec.decode(parts[7]),
+                    parameters = Codec.decodeMap(parts[8]),
+                    parametersDigest = Codec.decode(parts[9]),
+                    attemptId = Codec.decode(parts[10]),
+                    attemptNumber = parts[11].toInt(),
+                    status = EffectStatus.valueOf(parts[12]),
+                    retryAuthorization = EffectRetryAuthorization(
+                        previousAttemptId = Codec.decode(parts[13]),
+                        previousAttemptNumber = parts[14].toInt(),
+                        attestationRef = Codec.decode(parts[15]),
+                        attestationDigest = Codec.decode(parts[16]),
+                        trustPolicyRef = Codec.decode(parts[17]),
+                        authorizedAttemptId = Codec.decode(parts[18]),
+                        authorizedAttemptNumber = parts[19].toInt(),
+                        revalidatedAt = Codec.decode(parts[20])
+                    )
+                )
                 else -> throw IllegalArgumentException("unsupported effect record shape")
             }
         }.getOrNull()
@@ -622,38 +777,120 @@ class InMemoryRuntimeStore : RuntimeStore {
     @Synchronized override fun saveRun(run: Run) { runs[run.id] = run }
     @Synchronized override fun loadRun(runId: String, catalog: ActionCatalog): Run? = runs[runId]
 
-    @Synchronized override fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation {
-        if (invocations.map { it.effectId }.distinct().size != invocations.size) return EffectReservation.CONFLICT
+    override fun reserveEffects(
+        invocations: List<CapabilityInvocation>,
+        retryTrustVerifier: ReconciliationTrustVerifier?
+    ): EffectReservation {
+        if (invocations.map { it.effectId }.distinct().size != invocations.size) {
+            return EffectReservation.CONFLICT
+        }
         val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
         if (incoming.any { !it.hasValidIdentity() }) return EffectReservation.CONFLICT
 
-        for (candidate in incoming) {
-            val current = effects[candidate.effectId]
-            if (current == null) {
-                if (candidate.attemptNumber != 1) return EffectReservation.CONFLICT
-                if (usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
-                    return EffectReservation.CONFLICT
+        val snapshots = synchronized(this) {
+            val previous = linkedMapOf<String, EffectRecord>()
+            for (candidate in incoming) {
+                val current = effects[candidate.effectId]
+                if (current == null) {
+                    if (candidate.attemptNumber != 1) return@synchronized null
+                    if (usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
+                        return@synchronized null
+                    }
+                    continue
                 }
-                continue
+                if (!current.compatibleWith(candidate)) return@synchronized null
+                if (current.status != EffectStatus.CONFIRMED_NOT_EXECUTED) {
+                    return@synchronized null
+                }
+                if (candidate.attemptNumber != current.attemptNumber + 1) return@synchronized null
+                if (usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
+                    return@synchronized null
+                }
+                previous[candidate.effectId] = current.record()
             }
-            if (!current.compatibleWith(candidate)) return EffectReservation.CONFLICT
-            if (current.status != EffectStatus.CONFIRMED_NOT_EXECUTED) return EffectReservation.REPLAY_BLOCKED
-            if (candidate.attemptNumber != current.attemptNumber + 1) return EffectReservation.CONFLICT
-            if (usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
-                return EffectReservation.CONFLICT
+            previous
+        } ?: run {
+            return synchronized(this) {
+                incoming.firstNotNullOfOrNull { candidate ->
+                    val current = effects[candidate.effectId]
+                    when {
+                        current != null && current.status != EffectStatus.CONFIRMED_NOT_EXECUTED ->
+                            EffectReservation.REPLAY_BLOCKED
+                        current != null && !current.compatibleWith(candidate) ->
+                            EffectReservation.CONFLICT
+                        current != null && candidate.attemptNumber != current.attemptNumber + 1 ->
+                            EffectReservation.CONFLICT
+                        current == null && candidate.attemptNumber != 1 ->
+                            EffectReservation.CONFLICT
+                        else -> null
+                    }
+                } ?: EffectReservation.CONFLICT
             }
         }
 
-        incoming.forEach {
-            val previous = effects[it.effectId]
-            effects[it.effectId] = if (previous?.reconciliationAttestation != null) {
-                it.copy(reconciliationAttestation = previous.reconciliationAttestation)
-            } else {
-                it
-            }
-            usedAttemptIds.getOrPut(it.effectId) { linkedSetOf() }.add(it.attemptId)
+        val retryAuthorizations = linkedMapOf<String, EffectRetryAuthorization>()
+        for (candidate in incoming) {
+            val previous = snapshots[candidate.effectId] ?: continue
+            val (error, authorization) = prepareRetryAuthorization(
+                previous,
+                CapabilityInvocation(
+                    runId = candidate.runId,
+                    capabilityId = candidate.capabilityId,
+                    actionId = candidate.actionId,
+                    actionVersion = candidate.actionVersion,
+                    effectId = candidate.effectId,
+                    scope = candidate.scope,
+                    attributedTo = candidate.attributedTo,
+                    parameters = candidate.parameters,
+                    attemptId = candidate.attemptId,
+                    attemptNumber = candidate.attemptNumber
+                ),
+                retryTrustVerifier
+            )
+            if (error != null) return error
+            retryAuthorizations[candidate.effectId] = requireNotNull(authorization)
         }
-        return EffectReservation.RESERVED
+
+        return synchronized(this) {
+            for (candidate in incoming) {
+                val latest = effects[candidate.effectId]
+                val snapshot = snapshots[candidate.effectId]
+                if (snapshot == null) {
+                    if (latest != null) return@synchronized EffectReservation.RETRY_AUTHORIZATION_STALE
+                    if (candidate.attemptNumber != 1) return@synchronized EffectReservation.CONFLICT
+                    if (usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
+                        return@synchronized EffectReservation.CONFLICT
+                    }
+                } else {
+                    if (
+                        latest == null ||
+                        !sameIdentityAndAttempt(latest.record(), snapshot) ||
+                        latest.reconciliationAttestation != snapshot.reconciliationAttestation ||
+                        latest.status != EffectStatus.CONFIRMED_NOT_EXECUTED
+                    ) {
+                        return@synchronized EffectReservation.RETRY_AUTHORIZATION_STALE
+                    }
+                    val authorization = retryAuthorizations[candidate.effectId]
+                        ?: return@synchronized EffectReservation.RECONCILIATION_REVALIDATION_REQUIRED
+                    val next = candidate.copy(
+                        reconciliationAttestation = latest.reconciliationAttestation
+                    )
+                    if (!validRetryAuthorization(authorization, latest, next)) {
+                        return@synchronized EffectReservation.TRUST_REJECTED
+                    }
+                }
+            }
+
+            incoming.forEach { candidate ->
+                val previous = effects[candidate.effectId]
+                effects[candidate.effectId] = candidate.copy(
+                    reconciliationAttestation = previous?.reconciliationAttestation,
+                    retryAuthorization = retryAuthorizations[candidate.effectId]
+                )
+                usedAttemptIds.getOrPut(candidate.effectId) { linkedSetOf() }.add(candidate.attemptId)
+            }
+            EffectReservation.RESERVED
+        }
     }
 
     @Synchronized override fun completeEffect(effectId: String): EffectTransitionResult =
@@ -751,40 +988,112 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
     override fun loadRun(runId: String, catalog: ActionCatalog): Run? =
         withJournalLock { channel -> replay(channel).runs[runId]?.toRun(catalog) }
 
-    override fun reserveEffects(invocations: List<CapabilityInvocation>): EffectReservation =
-        withJournalLock { channel ->
-            if (invocations.map { it.effectId }.distinct().size != invocations.size) {
-                return@withJournalLock EffectReservation.CONFLICT
-            }
+    override fun reserveEffects(
+        invocations: List<CapabilityInvocation>,
+        retryTrustVerifier: ReconciliationTrustVerifier?
+    ): EffectReservation {
+        if (invocations.map { it.effectId }.distinct().size != invocations.size) {
+            return EffectReservation.CONFLICT
+        }
+        val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
+        if (incoming.any { !it.hasValidIdentity() }) return EffectReservation.CONFLICT
 
+        val snapshotResult = withJournalLock { channel ->
             val state = replay(channel)
-            val incoming = invocations.map { StoredEffect.from(it, EffectStatus.RESERVED) }
-            if (incoming.any { !it.hasValidIdentity() }) return@withJournalLock EffectReservation.CONFLICT
-
+            val previous = linkedMapOf<String, EffectRecord>()
+            var failure: EffectReservation? = null
             for (candidate in incoming) {
                 val current = state.effects[candidate.effectId]
-                if (current == null) {
+                when {
+                    current == null && candidate.attemptNumber != 1 ->
+                        failure = EffectReservation.CONFLICT
+                    current == null && state.usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true ->
+                        failure = EffectReservation.CONFLICT
+                    current != null && !current.compatibleWith(candidate) ->
+                        failure = EffectReservation.CONFLICT
+                    current != null && current.status != EffectStatus.CONFIRMED_NOT_EXECUTED ->
+                        failure = EffectReservation.REPLAY_BLOCKED
+                    current != null && candidate.attemptNumber != current.attemptNumber + 1 ->
+                        failure = EffectReservation.CONFLICT
+                    current != null && state.usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true ->
+                        failure = EffectReservation.CONFLICT
+                    current != null -> previous[candidate.effectId] = current.record()
+                }
+                if (failure != null) break
+            }
+            failure to previous
+        }
+        snapshotResult.first?.let { return it }
+        val snapshots = snapshotResult.second
+
+        val retryAuthorizations = linkedMapOf<String, EffectRetryAuthorization>()
+        for (candidate in incoming) {
+            val previous = snapshots[candidate.effectId] ?: continue
+            val invocation = CapabilityInvocation(
+                runId = candidate.runId,
+                capabilityId = candidate.capabilityId,
+                actionId = candidate.actionId,
+                actionVersion = candidate.actionVersion,
+                effectId = candidate.effectId,
+                scope = candidate.scope,
+                attributedTo = candidate.attributedTo,
+                parameters = candidate.parameters,
+                attemptId = candidate.attemptId,
+                attemptNumber = candidate.attemptNumber
+            )
+            val (error, authorization) = prepareRetryAuthorization(
+                previous,
+                invocation,
+                retryTrustVerifier
+            )
+            if (error != null) return error
+            retryAuthorizations[candidate.effectId] = requireNotNull(authorization)
+        }
+
+        return withJournalLock { channel ->
+            val state = replay(channel)
+            for (candidate in incoming) {
+                val latest = state.effects[candidate.effectId]
+                val snapshot = snapshots[candidate.effectId]
+                if (snapshot == null) {
+                    if (latest != null) return@withJournalLock EffectReservation.RETRY_AUTHORIZATION_STALE
                     if (candidate.attemptNumber != 1) return@withJournalLock EffectReservation.CONFLICT
                     if (state.usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
                         return@withJournalLock EffectReservation.CONFLICT
                     }
-                    continue
-                }
-                if (!current.compatibleWith(candidate)) return@withJournalLock EffectReservation.CONFLICT
-                if (current.status != EffectStatus.CONFIRMED_NOT_EXECUTED) {
-                    return@withJournalLock EffectReservation.REPLAY_BLOCKED
-                }
-                if (candidate.attemptNumber != current.attemptNumber + 1) {
-                    return@withJournalLock EffectReservation.CONFLICT
-                }
-                if (state.usedAttemptIds[candidate.effectId]?.contains(candidate.attemptId) == true) {
-                    return@withJournalLock EffectReservation.CONFLICT
+                } else {
+                    if (
+                        latest == null ||
+                        !sameIdentityAndAttempt(latest.record(), snapshot) ||
+                        latest.reconciliationAttestation != snapshot.reconciliationAttestation ||
+                        latest.status != EffectStatus.CONFIRMED_NOT_EXECUTED
+                    ) {
+                        return@withJournalLock EffectReservation.RETRY_AUTHORIZATION_STALE
+                    }
+                    val authorization = retryAuthorizations[candidate.effectId]
+                        ?: return@withJournalLock EffectReservation.RECONCILIATION_REVALIDATION_REQUIRED
+                    val next = candidate.copy(
+                        reconciliationAttestation = latest.reconciliationAttestation
+                    )
+                    if (!validRetryAuthorization(authorization, latest, next)) {
+                        return@withJournalLock EffectReservation.TRUST_REJECTED
+                    }
                 }
             }
 
-            incoming.forEach { append(channel, it.encode()) }
+            incoming.forEach { candidate ->
+                val previous = state.effects[candidate.effectId]
+                append(
+                    channel,
+                    candidate.copy(
+                        reconciliationAttestation = previous?.reconciliationAttestation,
+                        retryAuthorization = retryAuthorizations[candidate.effectId]
+                    ).encode()
+                )
+            }
             EffectReservation.RESERVED
         }
+    }
 
     override fun completeEffect(effectId: String): EffectTransitionResult =
         withJournalLock { channel -> transition(channel, effectId, EffectStatus.COMPLETED) }
@@ -922,11 +1231,11 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
                         ?: throw IllegalStateException("malformed run record at line ${index + 1}")
                     runs[run.id] = run
                 }
-                "E", "E2", "E3" -> {
+                "E", "E2", "E3", "E4" -> {
                     val decoded = StoredEffect.decode(parts, "legacy-attempt-${index + 1}")
                         ?: throw IllegalStateException("malformed effect record at line ${index + 1}")
                     val previous = effects[decoded.effectId]
-                    val effect = (if (parts[0] == "E3") decoded else decoded.copy(
+                    val effect = (if (parts[0] == "E3" || parts[0] == "E4") decoded else decoded.copy(
                         attemptNumber = (previous?.attemptNumber ?: 0) + 1
                     )).copy(reconciliationAttestation = previous?.reconciliationAttestation)
                     if (!effect.hasValidIdentity() || effect.status != EffectStatus.RESERVED) {
@@ -938,15 +1247,26 @@ class JournalRuntimeStore(private val file: File) : RuntimeStore {
                         throw IllegalStateException("reused effect attempt ID at line ${index + 1}")
                     }
                     if (previous == null) {
-                        if (effect.attemptNumber != 1) {
-                            throw IllegalStateException("first effect attempt must be number 1 at line ${index + 1}")
+                        if (effect.attemptNumber != 1 || effect.retryAuthorization != null) {
+                            throw IllegalStateException("first effect attempt must be number 1 and cannot carry retry authorization at line ${index + 1}")
                         }
-                    } else if (
-                        !previous.compatibleWith(effect) ||
-                        previous.status != EffectStatus.CONFIRMED_NOT_EXECUTED ||
-                        effect.attemptNumber != previous.attemptNumber + 1
-                    ) {
-                        throw IllegalStateException("illegal effect reservation at line ${index + 1}")
+                    } else {
+                        if (
+                            !previous.compatibleWith(effect) ||
+                            previous.status != EffectStatus.CONFIRMED_NOT_EXECUTED ||
+                            effect.attemptNumber != previous.attemptNumber + 1
+                        ) {
+                            throw IllegalStateException("illegal effect reservation at line ${index + 1}")
+                        }
+                        val authorization = effect.retryAuthorization
+                        if (parts[0] != "E4" || authorization == null ||
+                            !validRetryAuthorization(authorization, previous, effect)
+                        ) {
+                            throw IllegalStateException("retry lacks valid replay-time trust authorization at line ${index + 1}")
+                        }
+                    }
+                    if ((parts[0] == "E4") != (effect.retryAuthorization != null)) {
+                        throw IllegalStateException("retry authorization record shape mismatch at line ${index + 1}")
                     }
                     seenAttempts.add(effect.attemptId)
                     effects[effect.effectId] = effect
