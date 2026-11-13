@@ -50,6 +50,10 @@ class EffectJournalProcessDeathTest {
         send(first, EffectJournalProcessTestService.CMD_BLOCK_BEFORE_APPEND, key)
         val checkpoint = await(first, EffectJournalProcessTestService.REPLY_BEFORE_APPEND)
         assertEquals(firstInstance, checkpoint.getString("processInstanceId"))
+        assertEquals(
+            "trust-verifier-result-ready-before-E4-append",
+            checkpoint.getString("checkpoint")
+        )
         send(first, EffectJournalProcessTestService.CMD_KILL_PROCESS, key)
         assertTrue(
             "helper process must actually disconnect after SIGKILL",
