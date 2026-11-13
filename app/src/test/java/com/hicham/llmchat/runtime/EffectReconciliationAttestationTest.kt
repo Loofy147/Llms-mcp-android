@@ -518,6 +518,118 @@ class EffectReconciliationAttestationTest {
     }
 
     @Test
+    fun competingRestoredRetriesRevalidateOutsideLockAndOnlyOneReservationWins() {
+        val journal = File.createTempFile("effect-retry-race", ".journal")
+        journal.deleteOnExit()
+        val effect = invocation()
+        val artifactStore = ArtifactResolvingVerifier()
+        val first = JournalRuntimeStore(journal)
+        markUnknown(first, effect)
+        assertEquals(
+            EffectReconciliationResult.RECONCILED,
+            first.reconcileEffect(
+                effect.effectId,
+                attestation(effect, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED),
+                artifactStore
+            )
+        )
+
+        val bothVerifying = CountDownLatch(2)
+        val releaseVerifiers = CountDownLatch(1)
+        val blockingVerifier = object : ReconciliationTrustVerifier {
+            override fun resolve(
+                attestationRef: String,
+                attestationDigest: String
+            ): EffectReconciliationAttestation? =
+                artifactStore.resolve(attestationRef, attestationDigest)
+
+            override fun verify(
+                evidence: EffectReconciliationAttestation,
+                expectedEffect: EffectRecord
+            ): TrustVerificationResult {
+                bothVerifying.countDown()
+                check(releaseVerifiers.await(10, TimeUnit.SECONDS)) {
+                    "timed out waiting for competing retry verifiers"
+                }
+                return artifactStore.verify(evidence, expectedEffect)
+            }
+        }
+
+        val retry = effect.copy(attemptId = "attempt-2", attemptNumber = 2)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val firstFuture = executor.submit<EffectReservation> {
+                JournalRuntimeStore(journal).reserveEffects(listOf(retry), blockingVerifier)
+            }
+            val secondFuture = executor.submit<EffectReservation> {
+                JournalRuntimeStore(journal).reserveEffects(listOf(retry), blockingVerifier)
+            }
+
+            assertTrue(
+                "both callers must reach trust verification without holding the journal lock",
+                bothVerifying.await(10, TimeUnit.SECONDS)
+            )
+            releaseVerifiers.countDown()
+
+            val results = listOf(
+                firstFuture.get(10, TimeUnit.SECONDS),
+                secondFuture.get(10, TimeUnit.SECONDS)
+            )
+            assertEquals(1, results.count { it == EffectReservation.RESERVED })
+            assertEquals(1, results.count { it == EffectReservation.RETRY_AUTHORIZATION_STALE })
+            assertEquals(
+                1,
+                journal.readLines(Charsets.UTF_8).count { it.startsWith("E4|") }
+            )
+            assertEquals(
+                "attempt-2",
+                JournalRuntimeStore(journal).currentEffect(effect.effectId)?.attemptId
+            )
+        } finally {
+            releaseVerifiers.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun interruptedRetryReservationRestoresAsUnknownAndCannotBeBlindlyRepeated() {
+        val journal = File.createTempFile("effect-retry-interrupted", ".journal")
+        journal.deleteOnExit()
+        val effect = invocation()
+        val trust = ArtifactResolvingVerifier()
+        val first = JournalRuntimeStore(journal)
+        markUnknown(first, effect)
+        assertEquals(
+            EffectReconciliationResult.RECONCILED,
+            first.reconcileEffect(
+                effect.effectId,
+                attestation(effect, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED),
+                trust
+            )
+        )
+
+        val retry = effect.copy(attemptId = "attempt-2", attemptNumber = 2)
+        assertEquals(
+            EffectReservation.RESERVED,
+            JournalRuntimeStore(journal).reserveEffects(listOf(retry), trust)
+        )
+
+        val restored = JournalRuntimeStore(journal)
+        assertEquals(1, restored.recoverInterruptedEffects())
+        val interrupted = JournalRuntimeStore(journal).currentEffect(effect.effectId)
+        assertEquals(EffectStatus.UNKNOWN, interrupted?.status)
+        assertEquals("attempt-2", interrupted?.attemptId)
+        assertEquals(
+            EffectReservation.REPLAY_BLOCKED,
+            JournalRuntimeStore(journal).reserveEffects(
+                listOf(effect.copy(attemptId = "attempt-3", attemptNumber = 3)),
+                trust
+            )
+        )
+        assertEquals(1, journal.readLines(Charsets.UTF_8).count { it.startsWith("E4|") })
+    }
+
+    @Test
     fun separateJournalInstancesSerializeConcurrentReconciliation() {
         val journal = File.createTempFile("effect-concurrent-reconcile", ".journal")
         journal.deleteOnExit()
