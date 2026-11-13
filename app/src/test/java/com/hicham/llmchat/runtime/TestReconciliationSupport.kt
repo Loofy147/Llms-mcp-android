@@ -58,18 +58,35 @@ internal object TestReconciliationSupport {
         )
     }
 
-    val trustVerifier = ReconciliationTrustVerifier { attestation, _ ->
-        val digest = effectReconciliationAttestationDigest(attestation)
-        TrustVerificationResult(
-            attestationRef = "synthetic-test:$digest",
-            attestationDigest = digest,
-            trustPolicyRef = "synthetic-test-policy:v1",
-            signatureValid = true,
-            authorityApplicable = true,
-            evidenceDigestVerified = true,
-            verifierPolicyValid = true,
-            principalAuthorized = true
-        )
+    val trustVerifier = object : ReconciliationTrustVerifier {
+        private val artifacts = linkedMapOf<String, EffectReconciliationAttestation>()
+
+        override fun verify(
+            attestation: EffectReconciliationAttestation,
+            expectedEffect: EffectRecord
+        ): TrustVerificationResult {
+            val digest = effectReconciliationAttestationDigest(attestation)
+            val ref = "synthetic-test:$digest"
+            artifacts[ref] = attestation
+            return TrustVerificationResult(
+                attestationRef = ref,
+                attestationDigest = digest,
+                trustPolicyRef = "synthetic-test-policy:v1",
+                signatureValid = true,
+                authorityApplicable = true,
+                evidenceDigestVerified = true,
+                verifierPolicyValid = true,
+                principalAuthorized = true
+            )
+        }
+
+        override fun resolve(
+            attestationRef: String,
+            attestationDigest: String
+        ): EffectReconciliationAttestation? =
+            artifacts[attestationRef]?.takeIf {
+                effectReconciliationAttestationDigest(it) == attestationDigest
+            }
     }
 
     fun reconcile(
