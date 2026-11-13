@@ -814,10 +814,10 @@ class InMemoryRuntimeStore : RuntimeStore {
                 incoming.firstNotNullOfOrNull { candidate ->
                     val current = effects[candidate.effectId]
                     when {
-                        current != null && current.status != EffectStatus.CONFIRMED_NOT_EXECUTED ->
-                            EffectReservation.REPLAY_BLOCKED
                         current != null && !current.compatibleWith(candidate) ->
                             EffectReservation.CONFLICT
+                        current != null && current.status != EffectStatus.CONFIRMED_NOT_EXECUTED ->
+                            EffectReservation.REPLAY_BLOCKED
                         current != null && candidate.attemptNumber != current.attemptNumber + 1 ->
                             EffectReservation.CONFLICT
                         current == null && candidate.attemptNumber != 1 ->
