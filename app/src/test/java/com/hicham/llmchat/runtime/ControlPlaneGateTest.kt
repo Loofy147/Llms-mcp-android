@@ -69,7 +69,7 @@ class ControlPlaneGateTest {
         )
         assertTrue(restartedStore.unknownEffects().isEmpty())
         val retry = invocation.copy(attemptId = java.util.UUID.randomUUID().toString(), attemptNumber = 2)
-        assertEquals(EffectReservation.RESERVED, restartedStore.reserveEffects(listOf(retry)))
+        assertEquals(EffectReservation.RESERVED, restartedStore.reserveEffects(listOf(retry), TestReconciliationSupport.trustVerifier))
     }
 
     @Test
