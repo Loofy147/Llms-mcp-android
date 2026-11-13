@@ -61,7 +61,7 @@ class EffectJournalProcessTestService : Service() {
                 }
                 .onFailure { sendError(replyTo, it) }
 
-            CMD_BLOCK_BEFORE_APPEND -> runOnWorker("effect-retry-before-append") {
+            CMD_BLOCK_BEFORE_APPEND -> runOnWorker("effect-retry-before-append", replyTo) {
                 val prior = invocation(key, 1)
                 val retry = invocation(key, 2)
                 val verifier = verifier(prior) {
@@ -78,7 +78,7 @@ class EffectJournalProcessTestService : Service() {
                 })
             }
 
-            CMD_RESERVE_AND_WAIT_AFTER_APPEND -> runOnWorker("effect-retry-after-append") {
+            CMD_RESERVE_AND_WAIT_AFTER_APPEND -> runOnWorker("effect-retry-after-append", replyTo) {
                 val prior = invocation(key, 1)
                 val retry = invocation(key, 2)
                 val result = JournalRuntimeStore(journalFile(key))
@@ -259,13 +259,12 @@ class EffectJournalProcessTestService : Service() {
         }
     }
 
-    private fun runOnWorker(name: String, block: () -> Unit) {
+    private fun runOnWorker(name: String, replyTo: Messenger, block: () -> Unit) {
         Thread({
-            runCatching(block).onFailure { error ->
-                // Worker callbacks are delivered only to the requesting instrumentation client.
-                // The caller's reply Messenger is captured by the worker's block.
-                @Suppress("UNUSED_VARIABLE")
-                val ignored = error
+            try {
+                block()
+            } catch (error: Throwable) {
+                runCatching { sendError(replyTo, error) }
             }
         }, name).start()
     }
