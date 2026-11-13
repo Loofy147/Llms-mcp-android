@@ -456,7 +456,7 @@ class UnknownEffectReconciliationTest {
         if (!journal.exists()) return 0
         return journal.readLines(Charsets.UTF_8).count { line ->
             val parts = line.split('|')
-            if (parts.size < 2 || parts[0] !in setOf("E", "E2", "E3", "X", "A")) {
+            if (parts.size < 2 || parts[0] !in setOf("E", "E2", "E3", "E4", "X", "A")) {
                 false
             } else {
                 val decoded = runCatching {
