@@ -67,7 +67,7 @@ class EffectJournalProcessTestService : Service() {
                 val verifier = verifier(prior) {
                     send(replyTo, REPLY_BEFORE_APPEND, Bundle().apply {
                         putString("processInstanceId", processInstanceId)
-                        putString("checkpoint", "trust-verified-before-E4-append")
+                        putString("checkpoint", "trust-verifier-result-ready-before-E4-append")
                     })
                     awaitExternalKill()
                 }
@@ -233,9 +233,8 @@ class EffectJournalProcessTestService : Service() {
             attestation: EffectReconciliationAttestation,
             expectedEffect: EffectRecord
         ): TrustVerificationResult {
-            beforeReturning?.invoke()
             val digest = effectReconciliationAttestationDigest(attestation)
-            return TrustVerificationResult(
+            val result = TrustVerificationResult(
                 attestationRef = "process-death-fixture:$digest",
                 attestationDigest = digest,
                 trustPolicyRef = "process-death-test-policy:v1",
@@ -245,6 +244,8 @@ class EffectJournalProcessTestService : Service() {
                 verifierPolicyValid = true,
                 principalAuthorized = true
             )
+            beforeReturning?.invoke()
+            return result
         }
 
         override fun resolve(
