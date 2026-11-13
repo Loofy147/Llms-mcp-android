@@ -80,18 +80,35 @@ class UnknownEffectReconciliationTest {
         )
     }
 
-    private val syntheticTrustVerifier = ReconciliationTrustVerifier { evidence, _ ->
-        val digest = effectReconciliationAttestationDigest(evidence)
-        TrustVerificationResult(
-            attestationRef = "synthetic-fixture:$digest",
-            attestationDigest = digest,
-            trustPolicyRef = "synthetic-fixture-policy:v1",
-            signatureValid = true,
-            authorityApplicable = true,
-            evidenceDigestVerified = true,
-            verifierPolicyValid = true,
-            principalAuthorized = true
-        )
+    private val syntheticTrustVerifier = object : ReconciliationTrustVerifier {
+        private val artifacts = linkedMapOf<String, EffectReconciliationAttestation>()
+
+        override fun verify(
+            evidence: EffectReconciliationAttestation,
+            expectedEffect: EffectRecord
+        ): TrustVerificationResult {
+            val digest = effectReconciliationAttestationDigest(evidence)
+            val ref = "synthetic-fixture:$digest"
+            artifacts[ref] = evidence
+            return TrustVerificationResult(
+                attestationRef = ref,
+                attestationDigest = digest,
+                trustPolicyRef = "synthetic-fixture-policy:v1",
+                signatureValid = true,
+                authorityApplicable = true,
+                evidenceDigestVerified = true,
+                verifierPolicyValid = true,
+                principalAuthorized = true
+            )
+        }
+
+        override fun resolve(
+            attestationRef: String,
+            attestationDigest: String
+        ): EffectReconciliationAttestation? =
+            artifacts[attestationRef]?.takeIf {
+                effectReconciliationAttestationDigest(it) == attestationDigest
+            }
     }
 
     private fun reconcile(
@@ -140,7 +157,7 @@ class UnknownEffectReconciliationTest {
         )
 
         val retry = effect.copy(attemptId = java.util.UUID.randomUUID().toString(), attemptNumber = 2)
-        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(retry)))
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(retry), syntheticTrustVerifier))
         assertTrue(store.unknownEffects().isEmpty())
     }
 
@@ -298,7 +315,7 @@ class UnknownEffectReconciliationTest {
             store.reserveEffects(listOf(original))
         )
         val nextAttempt = original.copy(attemptId = java.util.UUID.randomUUID().toString(), attemptNumber = 2)
-        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(nextAttempt)))
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(nextAttempt), syntheticTrustVerifier))
         assertTrue(JournalRuntimeStore(journal).unknownEffects().isEmpty())
     }
 
@@ -505,7 +522,7 @@ class UnknownEffectReconciliationTest {
 
             val operation = step.get("op").asString
             val actualResult = when (operation) {
-                "reserve" -> store.reserveEffects(listOf(invocation)).name
+                "reserve" -> store.reserveEffects(listOf(invocation), syntheticTrustVerifier).name
                 "mark_unknown" -> {
                     val transition = store.markEffectUnknown(effectId)
                     if (transition == EffectTransitionResult.APPLIED) "UNKNOWN" else transition.name
@@ -561,7 +578,7 @@ class UnknownEffectReconciliationTest {
             attemptId = java.util.UUID.randomUUID().toString(),
             attemptNumber = 2
         )
-        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(attemptTwo)))
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(attemptTwo), syntheticTrustVerifier))
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(original.effectId))
         assertEquals(
             EffectReconciliationResult.RECONCILED,
@@ -577,7 +594,7 @@ class UnknownEffectReconciliationTest {
             attemptId = java.util.UUID.randomUUID().toString(),
             attemptNumber = 3
         )
-        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(attemptThree)))
+        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(attemptThree), syntheticTrustVerifier))
         assertEquals(3, JournalRuntimeStore(journal).currentEffect(original.effectId)?.attemptNumber)
     }
 
