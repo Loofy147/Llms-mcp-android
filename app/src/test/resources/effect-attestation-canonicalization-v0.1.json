@@ -1,0 +1,66 @@
+{
+  "schema": "open_system_one.effect_attestation_canonicalization_vector.v0.1",
+  "canonicalization": "open_system_one.effect_reconciliation_attestation_canonical.v0.1",
+  "encoding": "UTF-8",
+  "field_encoding": "decimal UTF-8 byte length, colon, field bytes; concatenate with no separators",
+  "scope_order": "ascending unsigned lexicographic UTF-8 byte order",
+  "signature_preimage_excludes": [
+    "authentication.signed_digest",
+    "authentication.signature"
+  ],
+  "attestation": {
+    "schema": "open_system_one.effect_reconciliation_attestation.v0.1",
+    "effect_identity": {
+      "schema": "open_system_one.effect_identity.v0.1",
+      "effect_id": "effect-golden-01",
+      "run_id": "run-golden-01",
+      "capability_id": "message.send",
+      "action_id": "send_once",
+      "action_version": 2,
+      "scope": [
+        "message:send",
+        "message:read"
+      ],
+      "attributed_to": "principal:test",
+      "parameters_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "attempt_id": "attempt-golden-01",
+    "attempt_number": 1,
+    "decision": "CONFIRMED_COMPLETED",
+    "decided_at": "2026-11-12T12:01:00Z",
+    "authority": {
+      "kind": "provider_api",
+      "ref": "provider:messaging:v2",
+      "observation_ref": "provider-query:receipt-42",
+      "queried_at": "2026-11-12T12:00:30Z",
+      "observed_at": "2026-11-12T12:00:31Z"
+    },
+    "evidence": {
+      "artifact_ref": "artifact:provider-receipt-42",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "verifier": {
+      "ref": "verifier:provider-receipt-v1",
+      "version": "1.0.0",
+      "result": "PASS",
+      "verified_at": "2026-11-12T12:00:50Z"
+    },
+    "accountable_principal": {
+      "kind": "service",
+      "ref": "service:reconciliation-worker"
+    },
+    "authentication": {
+      "scheme": "ed25519",
+      "key_ref": "key:reconciliation-service-v1",
+      "signed_digest": "sha256:3f032f89aa6ca5baacfe2d971096f5292eb2bb517b9cc098bc840128a74fd46f",
+      "signature": "base64url:synthetic-test-signature"
+    },
+    "reason": "Golden vector for cross-language reconciliation canonicalization."
+  },
+  "expected": {
+    "signature_preimage_byte_length": 854,
+    "signature_preimage_sha256": "sha256:3f032f89aa6ca5baacfe2d971096f5292eb2bb517b9cc098bc840128a74fd46f",
+    "attestation_byte_length": 965,
+    "attestation_sha256": "sha256:f4f29ce3a85e07ef63d9a69ac6aa1d4c8a06f0a48516794ebcf7d3525a02073e"
+  }
+}
