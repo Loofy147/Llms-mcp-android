@@ -133,9 +133,9 @@ class EffectReconciliationAttestationTest {
             attestationDigest: String
         ): EffectReconciliationAttestation? {
             if (!resolverAvailable) return null
-            return artifacts[attestationRef]?.takeIf {
-                effectReconciliationAttestationDigest(it) == attestationDigest
-            }
+            // Return the resolved bytes even when modified; the runtime must
+            // compare the content digest instead of trusting the resolver's claim.
+            return artifacts[attestationRef]
         }
 
         fun tamper(attestationRef: String) {
