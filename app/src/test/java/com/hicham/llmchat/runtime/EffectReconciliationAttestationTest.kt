@@ -375,19 +375,27 @@ class EffectReconciliationAttestationTest {
     fun confirmedNotExecutedRequiresFreshAttemptAfterTrustedReconciliation() {
         val store = InMemoryRuntimeStore()
         val effect = invocation()
+        val trust = ArtifactResolvingVerifier()
         markUnknown(store, effect)
         assertEquals(
             EffectReconciliationResult.RECONCILED,
             store.reconcileEffect(
                 effect.effectId,
                 attestation(effect, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED),
-                verifier()
+                trust
             )
         )
 
         val retry = effect.copy(attemptId = "attempt-2", attemptNumber = 2)
-        assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(retry)))
+        assertEquals(
+            EffectReservation.RESERVED,
+            store.reserveEffects(listOf(retry), trust)
+        )
         assertEquals("attempt-2", store.currentEffect(effect.effectId)?.attemptId)
+        assertEquals(
+            "attempt-2",
+            store.currentEffect(effect.effectId)?.retryAuthorization?.authorizedAttemptId
+        )
     }
 
     @Test
