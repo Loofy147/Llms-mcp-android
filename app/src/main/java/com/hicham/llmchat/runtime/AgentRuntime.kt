@@ -83,6 +83,14 @@ class AgentRuntime(
                 EffectReservation.RESERVED -> Unit
                 EffectReservation.REPLAY_BLOCKED -> return run.copy(status = RunStatus.FAILED, denialReason = "Effect replay blocked; reconciliation required").also(store::saveRun)
                 EffectReservation.CONFLICT -> return run.copy(status = RunStatus.FAILED, denialReason = "Effect identity conflict; execution blocked").also(store::saveRun)
+                EffectReservation.TRUST_UNAVAILABLE,
+                EffectReservation.TRUST_REJECTED,
+                EffectReservation.RECONCILIATION_REVALIDATION_REQUIRED,
+                EffectReservation.RETRY_AUTHORIZATION_STALE ->
+                    return run.copy(
+                        status = RunStatus.FAILED,
+                        denialReason = "Effect retry authorization is unavailable or invalid; execution blocked"
+                    ).also(store::saveRun)
             }
 
             for (invocation in invocations) {
