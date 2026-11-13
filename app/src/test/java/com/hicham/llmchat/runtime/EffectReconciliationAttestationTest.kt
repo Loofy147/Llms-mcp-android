@@ -104,6 +104,46 @@ class EffectReconciliationAttestationTest {
         )
     }
 
+    private class ArtifactResolvingVerifier : ReconciliationTrustVerifier {
+        private val artifacts = linkedMapOf<String, EffectReconciliationAttestation>()
+        var resolverAvailable = true
+        var signatureValid = true
+
+        override fun verify(
+            attestation: EffectReconciliationAttestation,
+            expectedEffect: EffectRecord
+        ): TrustVerificationResult {
+            val digest = effectReconciliationAttestationDigest(attestation)
+            val ref = "synthetic-attestation:$digest"
+            artifacts[ref] = attestation
+            return TrustVerificationResult(
+                attestationRef = ref,
+                attestationDigest = digest,
+                trustPolicyRef = "synthetic-trust-policy:v1",
+                signatureValid = signatureValid,
+                authorityApplicable = true,
+                evidenceDigestVerified = true,
+                verifierPolicyValid = true,
+                principalAuthorized = true
+            )
+        }
+
+        override fun resolve(
+            attestationRef: String,
+            attestationDigest: String
+        ): EffectReconciliationAttestation? {
+            if (!resolverAvailable) return null
+            return artifacts[attestationRef]?.takeIf {
+                effectReconciliationAttestationDigest(it) == attestationDigest
+            }
+        }
+
+        fun tamper(attestationRef: String) {
+            val original = requireNotNull(artifacts[attestationRef])
+            artifacts[attestationRef] = original.copy(reason = "tampered after reconciliation")
+        }
+    }
+
     private fun markUnknown(store: RuntimeStore, effect: CapabilityInvocation) {
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(effect)))
         assertEquals(EffectTransitionResult.APPLIED, store.markEffectUnknown(effect.effectId))
@@ -348,6 +388,125 @@ class EffectReconciliationAttestationTest {
         val retry = effect.copy(attemptId = "attempt-2", attemptNumber = 2)
         assertEquals(EffectReservation.RESERVED, store.reserveEffects(listOf(retry)))
         assertEquals("attempt-2", store.currentEffect(effect.effectId)?.attemptId)
+    }
+
+    @Test
+    fun restoredRetryRequiresResolverAndPersistsExactAuthorization() {
+        val journal = File.createTempFile("effect-retry-revalidation", ".journal")
+        journal.deleteOnExit()
+        val effect = invocation()
+        val trust = ArtifactResolvingVerifier()
+        val first = JournalRuntimeStore(journal)
+        markUnknown(first, effect)
+        val evidence = attestation(
+            effect,
+            EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED
+        )
+        assertEquals(
+            EffectReconciliationResult.RECONCILED,
+            first.reconcileEffect(effect.effectId, evidence, trust)
+        )
+
+        val retry = effect.copy(attemptId = "attempt-2", attemptNumber = 2)
+        val restoredWithoutResolver = JournalRuntimeStore(journal)
+        assertEquals(
+            EffectReservation.RECONCILIATION_REVALIDATION_REQUIRED,
+            restoredWithoutResolver.reserveEffects(listOf(retry))
+        )
+        assertEquals(
+            EffectStatus.CONFIRMED_NOT_EXECUTED,
+            restoredWithoutResolver.currentEffect(effect.effectId)?.status
+        )
+
+        val restoredWithResolver = JournalRuntimeStore(journal)
+        assertEquals(
+            EffectReservation.RESERVED,
+            restoredWithResolver.reserveEffects(listOf(retry), trust)
+        )
+        val current = JournalRuntimeStore(journal).currentEffect(effect.effectId)
+        assertEquals("attempt-2", current?.attemptId)
+        assertEquals(2, current?.attemptNumber)
+        val authorization = requireNotNull(current?.retryAuthorization)
+        assertEquals("attempt-1", authorization.previousAttemptId)
+        assertEquals(1, authorization.previousAttemptNumber)
+        assertEquals("attempt-2", authorization.authorizedAttemptId)
+        assertEquals(2, authorization.authorizedAttemptNumber)
+        assertEquals(
+            effectReconciliationAttestationDigest(evidence),
+            authorization.attestationDigest
+        )
+        assertEquals(
+            current?.reconciliationAttestation?.attestationRef,
+            authorization.attestationRef
+        )
+        assertEquals("synthetic-trust-policy:v1", authorization.trustPolicyRef)
+    }
+
+    @Test
+    fun retryFailsClosedWhenAttestationArtifactIsMissingOrTampered() {
+        val journal = File.createTempFile("effect-retry-unresolvable", ".journal")
+        journal.deleteOnExit()
+        val effect = invocation()
+        val trust = ArtifactResolvingVerifier()
+        val store = JournalRuntimeStore(journal)
+        markUnknown(store, effect)
+        val evidence = attestation(
+            effect,
+            EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED
+        )
+        assertEquals(
+            EffectReconciliationResult.RECONCILED,
+            store.reconcileEffect(effect.effectId, evidence, trust)
+        )
+        val retry = effect.copy(attemptId = "attempt-2", attemptNumber = 2)
+        val before = journal.readLines(Charsets.UTF_8).size
+
+        trust.resolverAvailable = false
+        assertEquals(
+            EffectReservation.RECONCILIATION_REVALIDATION_REQUIRED,
+            JournalRuntimeStore(journal).reserveEffects(listOf(retry), trust)
+        )
+        trust.resolverAvailable = true
+        val ref = requireNotNull(store.currentEffect(effect.effectId)?.reconciliationAttestation).attestationRef
+        trust.tamper(ref)
+        assertEquals(
+            EffectReservation.TRUST_REJECTED,
+            JournalRuntimeStore(journal).reserveEffects(listOf(retry), trust)
+        )
+        assertEquals(before, journal.readLines(Charsets.UTF_8).size)
+        assertEquals(
+            EffectStatus.CONFIRMED_NOT_EXECUTED,
+            JournalRuntimeStore(journal).currentEffect(effect.effectId)?.status
+        )
+    }
+
+    @Test
+    fun retryFailsClosedWhenTrustIsRevokedAfterRestore() {
+        val journal = File.createTempFile("effect-retry-revoked", ".journal")
+        journal.deleteOnExit()
+        val effect = invocation()
+        val trust = ArtifactResolvingVerifier()
+        val store = JournalRuntimeStore(journal)
+        markUnknown(store, effect)
+        assertEquals(
+            EffectReconciliationResult.RECONCILED,
+            store.reconcileEffect(
+                effect.effectId,
+                attestation(effect, EffectReconciliationDecision.CONFIRMED_NOT_EXECUTED),
+                trust
+            )
+        )
+        trust.signatureValid = false
+        val retry = effect.copy(attemptId = "attempt-2", attemptNumber = 2)
+
+        assertEquals(
+            EffectReservation.TRUST_REJECTED,
+            JournalRuntimeStore(journal).reserveEffects(listOf(retry), trust)
+        )
+        assertEquals(
+            EffectStatus.CONFIRMED_NOT_EXECUTED,
+            JournalRuntimeStore(journal).currentEffect(effect.effectId)?.status
+        )
     }
 
     @Test
