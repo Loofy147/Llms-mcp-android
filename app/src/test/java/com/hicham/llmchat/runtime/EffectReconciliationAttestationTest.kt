@@ -418,7 +418,7 @@ class EffectReconciliationAttestationTest {
         val retry = effect.copy(attemptId = "attempt-2", attemptNumber = 2)
         val restoredWithoutResolver = JournalRuntimeStore(journal)
         assertEquals(
-            EffectReservation.RECONCILIATION_REVALIDATION_REQUIRED,
+            EffectReservation.TRUST_UNAVAILABLE,
             restoredWithoutResolver.reserveEffects(listOf(retry))
         )
         assertEquals(
